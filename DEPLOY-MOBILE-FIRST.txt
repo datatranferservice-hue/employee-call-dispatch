@@ -1,0 +1,72 @@
+CALLFLOW COMMAND v1.0 — MOBILE-FIRST DEPLOYMENT
+
+Do these in this order.
+
+PART A — REPLACE THE GITHUB PAGES FRONT END
+1. Open your GitHub repository:
+   datatranferservice-hue/employee-call-dispatch
+2. Replace the current index.html with the index.html from this package.
+3. Commit the change to main.
+4. GitHub Pages should continue using main / root.
+
+IMPORTANT: index.html intentionally contains its CSS and browser JavaScript inside the same file. This prevents the old problem where app.js or styles.css went missing and caused 404 errors.
+
+PART B — CREATE THE BACK END
+5. Create a Supabase project.
+6. Open SQL Editor.
+7. Paste the complete schema.sql and run it.
+8. Open Authentication and create your first login account.
+9. In SQL Editor run:
+
+   update public.profiles
+   set role='owner', is_active=true
+   where email='YOUR EMAIL HERE';
+
+10. In Supabase Edge Functions create/deploy these three functions from this package:
+    voice-router
+    admin-api
+    employee-api
+
+11. voice-router must allow unauthenticated carrier requests (verify_jwt=false).
+    It still rejects fake requests because the code verifies Twilio's signed X-Twilio-Signature.
+12. admin-api and employee-api keep JWT verification ON.
+
+PART C — CONNECT THE DASHBOARD
+13. Open your live CallFlow site.
+14. Tap Connection setup.
+15. Paste your Supabase Project URL.
+16. Paste the browser-safe Supabase anon/publishable key.
+17. Save.
+18. Sign in with the owner account.
+
+PART D — CONNECT REAL PHONE CALLS
+19. In Twilio create/use a Voice-capable business phone number.
+20. Create a Twilio Verify Service and copy its Service SID.
+21. Set the Supabase Edge Function secrets listed in README.md.
+22. Set PUBLIC_VOICE_ROUTER_URL to the exact public voice-router URL.
+23. Set APP_ORIGIN to:
+    https://datatranferservice-hue.github.io
+24. In Twilio phone-number Voice configuration, set "A call comes in" to HTTP POST to PUBLIC_VOICE_ROUTER_URL.
+
+PART E — ADD AN EMPLOYEE
+25. Owner opens Employees -> Invite employee.
+26. Employee accepts/signs in.
+27. Employee opens My Routing.
+28. Employee enters their own phone as E.164, for example +15205550100.
+29. Employee taps Send verification code.
+30. Employee enters the code and taps Verify this phone.
+31. Owner opens Employees and approves the verified phone.
+32. Owner activates the employee.
+33. Employee taps Go on duty.
+
+NOW THE LIVE CALL PATH IS:
+Customer calls business number
+-> carrier sends call into CallFlow
+-> CallFlow checks hours
+-> CallFlow chooses an eligible on-duty employee
+-> employee's verified phone rings
+-> if no answer/busy, CallFlow tries the next eligible employee
+-> outcome is logged
+-> overflow/voicemail/callback rules run if nobody answers.
+
+DO NOT put the Twilio Auth Token, Twilio API secret, or Supabase service-role key into GitHub Pages.
