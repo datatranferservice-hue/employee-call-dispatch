@@ -23,5 +23,11 @@ services:
         generateValue: true
       - key: SESSION_HOURS
         value: "12"
+      - key: LOGIN_WINDOW_MINUTES
+        value: "15"
+      - key: LOGIN_MAX_ATTEMPTS
+        value: "8"
+      - key: DB_POOL_MAX
+        value: "10"
       - key: TRUST_PROXY
         value: "1"
