@@ -10,6 +10,26 @@ const PORT = Number(process.env.PORT || 3000);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SESSION_HOURS = Number(process.env.SESSION_HOURS || 12);
 const allowedOrigins = new Set(String(process.env.ALLOWED_ORIGINS || "").split(",").map(v => v.trim()).filter(Boolean));
+const production = process.env.NODE_ENV === "production";
+const loginWindowMs = Number(process.env.LOGIN_WINDOW_MINUTES || 15) * 60_000;
+const loginMaxAttempts = Number(process.env.LOGIN_MAX_ATTEMPTS || 8);
+const loginAttempts = new Map();
+
+function loginRateLimit(req, res, next) {
+  const key = String(req.ip || req.socket?.remoteAddress || "unknown");
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || now - entry.startedAt >= loginWindowMs) {
+    loginAttempts.set(key, { startedAt: now, attempts: 1 });
+    return next();
+  }
+  entry.attempts += 1;
+  if (entry.attempts > loginMaxAttempts) {
+    res.set("Retry-After", String(Math.ceil((loginWindowMs - (now - entry.startedAt)) / 1000)));
+    return res.status(429).json({ ok: false, error: "Too many login attempts. Please try again later." });
+  }
+  next();
+}
 
 app.set("trust proxy", Number(process.env.TRUST_PROXY || 1));
 app.use((req, res, next) => {
@@ -21,7 +41,7 @@ app.use((req, res, next) => {
     "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'"
   });
   const origin = req.headers.origin;
-  if (origin && (allowedOrigins.size === 0 || allowedOrigins.has(origin))) {
+  if (origin && (allowedOrigins.has(origin) || (!production && allowedOrigins.size === 0))) {
     res.set("Access-Control-Allow-Origin", origin);
     res.set("Vary", "Origin");
     res.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CallFlow-Signature");
@@ -89,7 +109,7 @@ app.get("/api/health", async (_req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/auth/login", async (req, res, next) => {
+app.post("/api/auth/login", loginRateLimit, async (req, res, next) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
@@ -186,8 +206,13 @@ app.post("/api/appointments", auth, async (req, res, next) => {
   try {
     const { employeeId, customerName, customerPhone, scheduledAt, notes } = req.body || {};
     if (!customerName || !scheduledAt) return jsonError(res, 400, "Customer name and scheduled time are required");
+    const assignedEmployeeId = employeeId || req.user.employee_id || null;
+    if (assignedEmployeeId) {
+      const employee = await query("SELECT id FROM employees WHERE id=$1 AND organization_id=$2 AND active=true", [assignedEmployeeId, req.user.organization_id]);
+      if (!employee.rowCount) return jsonError(res, 400, "Assigned employee is not active in this organization");
+    }
     const result = await query(`INSERT INTO appointments(organization_id,employee_id,customer_name,customer_phone,scheduled_at,notes)
-      VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [req.user.organization_id, employeeId || req.user.employee_id, customerName, customerPhone || null, scheduledAt, notes || null]);
+      VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [req.user.organization_id, assignedEmployeeId, customerName, customerPhone || null, scheduledAt, notes || null]);
     await audit(req.user.organization_id, req.user.id, "appointment.created", { appointmentId: result.rows[0].id });
     res.status(201).json({ ok: true, appointment: result.rows[0] });
   } catch (error) { next(error); }
