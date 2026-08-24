@@ -233,6 +233,9 @@ app.post("/api/appointments", auth, async (req, res, next) => {
 
 async function routeInbound(organizationId, callerPhone, providerCallId) {
   return transaction(async client => {
+    // Serialize retries for the same provider call before reading or assigning employees.
+    // This prevents concurrent duplicate webhooks from marking multiple employees busy.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [String(providerCallId)]);
     const settingsResult = await client.query("SELECT * FROM organization_settings WHERE organization_id=$1 FOR UPDATE", [organizationId]);
     const settings = settingsResult.rows[0];
     if (!settings) throw new Error("Organization settings missing");

@@ -4,13 +4,15 @@
   "description": "Production employee call dispatch and workforce operations platform",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node --env-file-if-exists=.env --watch src/server.js",
     "start": "node scripts/migrate.js && node src/server.js",
     "migrate": "node --env-file-if-exists=.env scripts/migrate.js",
     "create-owner": "node --env-file-if-exists=.env scripts/create-owner.js",
-    "check": "node --check src/server.js && node --check src/db.js && node --check src/routing.js && node --check src/policy.js",
+    "check": "node --check src/*.js scripts/*.js test/*.js",
     "test": "node --test"
   },
   "dependencies": {
