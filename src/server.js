@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { query, transaction, healthcheck } from "./db.js";
 import { chooseEmployee, isWithinBusinessHours, normalizeStrategy } from "./routing.js";
+import { canCreateRole, isTerminalCallStatus, isValidCallStatus } from "./policy.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -138,6 +139,16 @@ app.get("/api/me", auth, (req, res) => res.json({ ok: true, user: req.user }));
 app.get("/api/dashboard", auth, async (req, res, next) => {
   try {
     const org = req.user.organization_id;
+    if (req.user.role === "employee") {
+      const [employee, calls, appointments] = await Promise.all([
+        query(`SELECT e.id,e.forwarding_phone,e.phone_verified,e.phone_approved,e.on_duty,e.busy,e.routed_calls,e.last_routed_at,e.active,
+          u.name,u.email,u.role,(SELECT clock_in FROM shifts WHERE employee_id=e.id AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1) clock_in
+          FROM employees e JOIN users u ON u.id=e.user_id WHERE e.organization_id=$1 AND e.id=$2`, [org, req.user.employee_id]),
+        query("SELECT id,employee_id,caller_phone,status,started_at,answered_at,ended_at FROM calls WHERE organization_id=$1 AND employee_id=$2 ORDER BY started_at DESC LIMIT 100", [org, req.user.employee_id]),
+        query("SELECT * FROM appointments WHERE organization_id=$1 AND employee_id=$2 ORDER BY scheduled_at LIMIT 100", [org, req.user.employee_id])
+      ]);
+      return res.json({ ok: true, employees: employee.rows, calls: calls.rows, appointments: appointments.rows, settings: null, audit: [] });
+    }
     const [employees, calls, appointments, settings, events] = await Promise.all([
       query(`SELECT e.*,u.name,u.email,u.role,
         (SELECT clock_in FROM shifts WHERE employee_id=e.id AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1) clock_in
@@ -156,6 +167,7 @@ app.post("/api/admin/employees", auth, requireRole("owner", "admin"), async (req
   try {
     const { name, email, password, role = "employee", forwardingPhone } = req.body || {};
     if (!name || !email || !password || password.length < 12) return jsonError(res, 400, "Name, email and a password of at least 12 characters are required");
+    if (!canCreateRole(req.user.role, role)) return jsonError(res, 403, "You cannot create an account with that role");
     const hash = await passwordHash(password);
     const result = await transaction(async client => {
       const user = await client.query(`INSERT INTO users(organization_id,name,email,password_hash,role)
@@ -207,6 +219,7 @@ app.post("/api/appointments", auth, async (req, res, next) => {
     const { employeeId, customerName, customerPhone, scheduledAt, notes } = req.body || {};
     if (!customerName || !scheduledAt) return jsonError(res, 400, "Customer name and scheduled time are required");
     const assignedEmployeeId = employeeId || req.user.employee_id || null;
+    if (req.user.role === "employee" && assignedEmployeeId !== req.user.employee_id) return jsonError(res, 403, "Employees may only create appointments assigned to themselves");
     if (assignedEmployeeId) {
       const employee = await query("SELECT id FROM employees WHERE id=$1 AND organization_id=$2 AND active=true", [assignedEmployeeId, req.user.organization_id]);
       if (!employee.rowCount) return jsonError(res, 400, "Assigned employee is not active in this organization");
@@ -223,6 +236,12 @@ async function routeInbound(organizationId, callerPhone, providerCallId) {
     const settingsResult = await client.query("SELECT * FROM organization_settings WHERE organization_id=$1 FOR UPDATE", [organizationId]);
     const settings = settingsResult.rows[0];
     if (!settings) throw new Error("Organization settings missing");
+    const existing = await client.query(`SELECT c.*,e.forwarding_phone FROM calls c LEFT JOIN employees e ON e.id=c.employee_id WHERE c.organization_id=$1 AND c.provider_call_id=$2 FOR UPDATE OF c`, [organizationId, providerCallId]);
+    if (existing.rowCount) {
+      const call = existing.rows[0];
+      if (call.employee_id && call.forwarding_phone) return { mode: "route", call, employee: { id: call.employee_id, phone: call.forwarding_phone }, ringSeconds: settings.ring_seconds, maxAttempts: settings.max_attempts, replay: true };
+      return { mode: call.status === "after_hours" ? "after_hours" : "overflow", call, message: call.metadata?.message, overflow: settings.overflow_action, replay: true };
+    }
     if (!isWithinBusinessHours(new Date(), settings.timezone || "America/Phoenix", settings.business_hours, settings.closed_override)) {
       const call = await client.query(`INSERT INTO calls(organization_id,provider_call_id,caller_phone,status,metadata)
         VALUES($1,$2,$3,'after_hours',$4) ON CONFLICT(provider_call_id) DO UPDATE SET metadata=EXCLUDED.metadata RETURNING *`,
@@ -263,12 +282,12 @@ app.post("/api/webhooks/telephony/status", async (req, res, next) => {
     if (!authorization.ok) return jsonError(res, authorization.status, authorization.error);
     const { providerCallId, status } = req.body || {};
     if (!providerCallId || !status) return jsonError(res, 400, "providerCallId and status are required");
+    if (!isValidCallStatus(status)) return jsonError(res, 400, "Unsupported call status");
     const result = await query(`UPDATE calls SET status=$2,answered_at=CASE WHEN $2='answered' THEN now() ELSE answered_at END,
-      ended_at=CASE WHEN $2 IN ('completed','failed','busy','no_answer') THEN now() ELSE ended_at END
+      ended_at=CASE WHEN $2 IN ('completed','failed','busy','no_answer','canceled') THEN now() ELSE ended_at END
       WHERE provider_call_id=$1 RETURNING organization_id,employee_id`, [providerCallId, status]);
-    if (result.rowCount && ["completed", "failed", "busy", "no_answer"].includes(status)) {
-      await query("UPDATE employees SET busy=false WHERE id=$1", [result.rows[0].employee_id]);
-    }
+    if (!result.rowCount) return jsonError(res, 404, "Call not found");
+    if (isTerminalCallStatus(status) && result.rows[0].employee_id) await query("UPDATE employees SET busy=false WHERE id=$1 AND organization_id=$2", [result.rows[0].employee_id, result.rows[0].organization_id]);
     res.json({ ok: true });
   } catch (error) { next(error); }
 });
