@@ -1,22 +1,20 @@
 {
   "name": "callflow-command",
-  "version": "2.0.0",
-  "description": "Production employee call dispatch, AI operations and administration platform",
+  "version": "2.1.0",
+  "description": "Production employee call dispatch and workforce operations platform",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=22"
-  },
+  "engines": { "node": ">=22" },
   "scripts": {
-    "dev": "node --env-file=.env --watch src/server.js",
-    "start": "node --env-file=.env src/server.js",
-    "migrate": "node --env-file=.env scripts/migrate.js",
-    "create-owner": "node --env-file=.env scripts/create-owner.js",
+    "dev": "node --env-file-if-exists=.env --watch src/server.js",
+    "start": "node src/server.js",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.js",
+    "create-owner": "node --env-file-if-exists=.env scripts/create-owner.js",
+    "check": "node --check src/server.js && node --check src/db.js && node --check src/routing.js",
     "test": "node --test"
   },
   "dependencies": {
-    "express": "latest",
-    "openai": "latest",
-    "pg": "latest"
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
   }
 }

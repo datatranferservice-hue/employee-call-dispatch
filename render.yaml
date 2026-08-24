@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: employee-call-dispatch-api
+    runtime: node
+    region: oregon
+    plan: free
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: TELEPHONY_WEBHOOK_SECRET
+        generateValue: true
+      - key: SESSION_HOURS
+        value: "12"
+      - key: TRUST_PROXY
+        value: "1"
