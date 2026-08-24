@@ -6,7 +6,7 @@ Production-oriented employee call dispatch and workforce operations platform.
 
 - PostgreSQL-backed organizations, users, sessions, employees, shifts, calls, appointments, settings and audit events.
 - Secure password hashing with Node.js scrypt.
-- Bearer sessions stored only as SHA-256 hashes.
+- Secure HttpOnly cookie sessions with tokens stored only as SHA-256 hashes.
 - Owner/admin/employee role enforcement on the server.
 - Employee creation, activation controls, forwarding-number approval flags and duty shifts.
 - Atomic inbound call assignment using PostgreSQL row locks.
@@ -26,6 +26,7 @@ The server returns the selected employee destination to a connected telephone pr
 
 ## Required production configuration
 
+- `APP_BASE_URL`
 - `DATABASE_URL`
 - `DATABASE_SSL=true`
 - `ALLOWED_ORIGINS`
@@ -53,7 +54,7 @@ The routing backend is provider-neutral and operational after deployment, but or
 
 Do not route customer calls until:
 
-1. The GitHub workflow passes.
+1. The GitHub workflow, syntax checks, tests and dependency audit pass.
 2. `/api/health` reports the database connected.
 3. The owner account is created.
 4. Test employees are verified and approved.
