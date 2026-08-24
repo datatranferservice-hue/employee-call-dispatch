@@ -5,6 +5,7 @@ import path from "node:path";
 import { query, transaction, healthcheck } from "./db.js";
 import { chooseEmployee, isWithinBusinessHours, normalizeStrategy } from "./routing.js";
 import { canCreateRole, isTerminalCallStatus, isValidCallStatus } from "./policy.js";
+import { createLoginRateLimiter } from "./login-rate-limit.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -14,23 +15,11 @@ const allowedOrigins = new Set(String(process.env.ALLOWED_ORIGINS || "").split("
 const production = process.env.NODE_ENV === "production";
 const loginWindowMs = Number(process.env.LOGIN_WINDOW_MINUTES || 15) * 60_000;
 const loginMaxAttempts = Number(process.env.LOGIN_MAX_ATTEMPTS || 8);
-const loginAttempts = new Map();
-
-function loginRateLimit(req, res, next) {
-  const key = String(req.ip || req.socket?.remoteAddress || "unknown");
-  const now = Date.now();
-  const entry = loginAttempts.get(key);
-  if (!entry || now - entry.startedAt >= loginWindowMs) {
-    loginAttempts.set(key, { startedAt: now, attempts: 1 });
-    return next();
-  }
-  entry.attempts += 1;
-  if (entry.attempts > loginMaxAttempts) {
-    res.set("Retry-After", String(Math.ceil((loginWindowMs - (now - entry.startedAt)) / 1000)));
-    return res.status(429).json({ ok: false, error: "Too many login attempts. Please try again later." });
-  }
-  next();
-}
+const loginRateLimiter = createLoginRateLimiter({ windowMs: loginWindowMs, maxAttempts: loginMaxAttempts });
+const loginIdentity = req => ({
+  ip: String(req.ip || req.socket?.remoteAddress || "unknown"),
+  email: String(req.body?.email || "").trim().toLowerCase()
+});
 
 app.set("trust proxy", Number(process.env.TRUST_PROXY || 1));
 app.use((req, res, next) => {
@@ -110,16 +99,24 @@ app.get("/api/health", async (_req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/auth/login", loginRateLimit, async (req, res, next) => {
+app.post("/api/auth/login", async (req, res, next) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
     if (!email || !password) return jsonError(res, 400, "Email and password are required");
+    const identity = loginIdentity(req);
+    const limit = loginRateLimiter.state(identity.ip, identity.email);
+    if (limit.blocked) {
+      res.set("Retry-After", String(limit.retryAfterSeconds));
+      return jsonError(res, 429, "Too many failed login attempts. Please try again later.");
+    }
     const result = await query("SELECT * FROM users WHERE email=$1 AND active=true ORDER BY created_at LIMIT 1", [email]);
     if (!result.rowCount || !(await passwordValid(password, result.rows[0].password_hash))) {
+      loginRateLimiter.recordFailure(identity.ip, identity.email);
       await new Promise(resolve => setTimeout(resolve, 350));
       return jsonError(res, 401, "Incorrect email or password");
     }
+    loginRateLimiter.clear(identity.ip, identity.email);
     const user = result.rows[0];
     const token = crypto.randomBytes(32).toString("base64url");
     await query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+($3 || ' hours')::interval)", [sha256(token), user.id, SESSION_HOURS]);
