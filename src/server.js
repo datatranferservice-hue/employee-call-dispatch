@@ -34,7 +34,8 @@ app.use(express.json({
   limit: process.env.MAX_JSON_BODY || "1mb",
   verify: (req, _res, buffer) => { req.rawBody = buffer; }
 }));
-app.use(express.static(ROOT, { extensions: ["html"], etag: true, maxAge: "10m" }));
+app.get("/", (_req, res) => res.sendFile(path.join(ROOT, "index.html")));
+app.get("/index.html", (_req, res) => res.sendFile(path.join(ROOT, "index.html")));
 
 const jsonError = (res, status, message) => res.status(status).json({ ok: false, error: message });
 const sha256 = value => crypto.createHash("sha256").update(value).digest("hex");
@@ -70,6 +71,16 @@ async function auth(req, res, next) {
   } catch (error) { next(error); }
 }
 const requireRole = (...roles) => (req, res, next) => roles.includes(req.user.role) ? next() : jsonError(res, 403, "Insufficient permission");
+const webhookAuthorized = req => {
+  const secret = process.env.TELEPHONY_WEBHOOK_SECRET;
+  if (process.env.NODE_ENV === "production" && !secret) return { ok: false, status: 503, error: "Telephony webhook is not configured" };
+  if (!secret) return { ok: true };
+  const supplied = String(req.headers["x-callflow-signature"] || "");
+  const expected = crypto.createHmac("sha256", secret).update(req.rawBody || Buffer.alloc(0)).digest("hex");
+  return safeEqual(supplied, expected)
+    ? { ok: true }
+    : { ok: false, status: 401, error: "Invalid webhook signature" };
+};
 
 app.get("/api/health", async (_req, res, next) => {
   try {
@@ -212,13 +223,8 @@ async function routeInbound(organizationId, callerPhone, providerCallId) {
 
 app.post("/api/webhooks/telephony/inbound", async (req, res, next) => {
   try {
-    const secret = process.env.TELEPHONY_WEBHOOK_SECRET;
-    if (process.env.NODE_ENV === "production" && !secret) return jsonError(res, 503, "Telephony webhook is not configured");
-    if (secret) {
-      const supplied = String(req.headers["x-callflow-signature"] || "");
-      const expected = crypto.createHmac("sha256", secret).update(req.rawBody || Buffer.alloc(0)).digest("hex");
-      if (!safeEqual(supplied, expected)) return jsonError(res, 401, "Invalid webhook signature");
-    }
+    const authorization = webhookAuthorized(req);
+    if (!authorization.ok) return jsonError(res, authorization.status, authorization.error);
     const { organizationId, callerPhone, providerCallId } = req.body || {};
     if (!organizationId || !providerCallId) return jsonError(res, 400, "organizationId and providerCallId are required");
     const route = await routeInbound(organizationId, callerPhone || null, providerCallId);
@@ -228,7 +234,10 @@ app.post("/api/webhooks/telephony/inbound", async (req, res, next) => {
 
 app.post("/api/webhooks/telephony/status", async (req, res, next) => {
   try {
+    const authorization = webhookAuthorized(req);
+    if (!authorization.ok) return jsonError(res, authorization.status, authorization.error);
     const { providerCallId, status } = req.body || {};
+    if (!providerCallId || !status) return jsonError(res, 400, "providerCallId and status are required");
     const result = await query(`UPDATE calls SET status=$2,answered_at=CASE WHEN $2='answered' THEN now() ELSE answered_at END,
       ended_at=CASE WHEN $2 IN ('completed','failed','busy','no_answer') THEN now() ELSE ended_at END
       WHERE provider_call_id=$1 RETURNING organization_id,employee_id`, [providerCallId, status]);
