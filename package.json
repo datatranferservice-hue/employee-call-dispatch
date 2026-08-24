@@ -10,7 +10,7 @@
     "start": "node scripts/migrate.js && node src/server.js",
     "migrate": "node --env-file-if-exists=.env scripts/migrate.js",
     "create-owner": "node --env-file-if-exists=.env scripts/create-owner.js",
-    "check": "node --check src/server.js && node --check src/db.js && node --check src/routing.js",
+    "check": "node --check src/server.js && node --check src/db.js && node --check src/routing.js && node --check src/policy.js",
     "test": "node --test"
   },
   "dependencies": {
