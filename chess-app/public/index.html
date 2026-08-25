@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>Two Player Chess</title>
+  <style>
+    :root{--bg:#07101c;--panel:#111c2d;--panel2:#16243a;--line:#2b3c59;--text:#f7fbff;--muted:#9db0ca;--green:#52d696;--blue:#77a8ff;--red:#ff7a86;--gold:#ffd166;--light:#e8edf4;--dark:#63738b;--shadow:0 18px 55px rgba(0,0,0,.35)}
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;min-height:100%;background:radial-gradient(circle at top,#172945 0,#091321 45%,#050b13 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{min-height:100dvh}
+    button,input{font:inherit}
+    button{cursor:pointer;border:0}
+    .app{width:min(100%,1000px);margin:auto;padding:12px 10px 28px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:900}.logo{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,var(--green),var(--blue));color:#07111f;font-size:27px;box-shadow:var(--shadow)}
+    .brand small{display:block;color:var(--muted);font-size:11px;font-weight:700;margin-top:2px}
+    .network{display:flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid var(--line);background:#0c1728;border-radius:999px;font-size:12px;font-weight:800;color:#c7d5e9}.dot{width:8px;height:8px;border-radius:50%;background:#77869b}.dot.ok{background:var(--green);box-shadow:0 0 0 4px rgba(82,214,150,.12)}.dot.wait{background:#f0b84d}.dot.bad{background:var(--red)}
+    .card{background:linear-gradient(180deg,rgba(20,33,53,.97),rgba(13,23,39,.97));border:1px solid rgba(139,168,211,.17);border-radius:22px;box-shadow:var(--shadow)}
+    .landing{padding:26px 18px;text-align:center}.landing h1{font-size:clamp(32px,8vw,58px);line-height:1;margin:4px 0 12px}.landing p{color:var(--muted);line-height:1.55;max-width:620px;margin:0 auto 22px}
+    .btn{min-height:48px;border-radius:14px;padding:11px 15px;font-weight:900;background:linear-gradient(135deg,var(--green),var(--blue));color:#06111e}.btn.secondary{background:#1b2a43;color:#eef5ff;border:1px solid #344a6c}.btn.danger{background:#3a202a;color:#ffe5e8;border:1px solid #70404b}.btn:disabled{opacity:.5}
+    .landing .btn{width:min(100%,420px)}
+    .game{display:none}.game.show{display:block}.landing.hide{display:none}
+    .grid{display:grid;grid-template-columns:minmax(0,640px) minmax(250px,1fr);gap:14px;align-items:start}
+    .boardCard{padding:9px}.player{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 4px 10px;font-weight:900;font-size:14px}.player.bottom{padding:10px 4px 4px}.playerLeft{display:flex;align-items:center;gap:8px}.avatar{width:32px;height:32px;border-radius:10px;background:#253651;display:grid;place-items:center;font-size:19px}.tag{padding:6px 9px;border-radius:999px;font-size:11px;background:#22314c;color:#aebfda}.tag.active{background:#153e30;color:#7cf0b7}
+    .board{width:100%;aspect-ratio:1;display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);border-radius:13px;overflow:hidden;touch-action:manipulation;user-select:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+    .sq{position:relative;display:grid;place-items:center;font-size:clamp(29px,10.5vw,58px);line-height:1}.sq.light{background:var(--light)}.sq.dark{background:var(--dark)}.sq.selected{box-shadow:inset 0 0 0 5px var(--gold)}.sq.last{box-shadow:inset 0 0 0 5px rgba(119,168,255,.56)}.sq.target:after{content:"";position:absolute;width:24%;height:24%;border-radius:50%;background:rgba(37,176,98,.82);box-shadow:0 0 0 4px rgba(255,255,255,.22)}.sq.capture:after{content:"";position:absolute;inset:7%;border:5px solid rgba(255,73,91,.75);border-radius:50%}.piece{position:relative;z-index:2}.piece.white{color:#fff;text-shadow:0 1px 2px #1f2b3d,0 0 1px #000}.piece.black{color:#0a111c;text-shadow:0 1px 0 rgba(255,255,255,.2)}.coord{position:absolute;font-size:9px;font-weight:900;z-index:3;opacity:.7}.file{right:3px;bottom:2px}.rank{left:3px;top:2px}.light .coord{color:#56657b}.dark .coord{color:#f0f4fb}
+    .side{padding:15px}.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.12em;font-weight:900;color:#87a0c3}.status{font-size:24px;font-weight:950;margin:5px 0 3px}.sub{color:var(--muted);font-size:13px;min-height:20px;line-height:1.4}.divider{height:1px;background:#293a56;margin:14px 0}
+    .invite{background:#0a1526;border:1px solid #2a3e60;border-radius:14px;padding:11px}.roomLine{display:flex;justify-content:space-between;gap:8px;align-items:center}.roomCode{font-size:20px;font-weight:950;letter-spacing:.14em}.inviteButtons{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.inviteButtons .btn{min-height:42px;font-size:12px;padding:9px}
+    .moves{max-height:225px;overflow:auto;background:#0b1525;border:1px solid #273a58;border-radius:13px;padding:8px}.moveRow{display:grid;grid-template-columns:30px 1fr 1fr;gap:7px;padding:6px 7px;border-radius:8px;font-size:13px}.moveRow:nth-child(odd){background:rgba(255,255,255,.025)}.moveNo{color:#8196b6}.moveCell{font-weight:850}.empty{padding:12px;text-align:center;color:#788daa;font-size:13px}
+    .controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.controls .btn{min-height:43px;font-size:12px;padding:9px}.full{grid-column:1/-1}.tiny{font-size:11px;color:#7f92af;line-height:1.45;text-align:center;margin-top:11px}
+    .toast{position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translate(-50%,15px);background:#f3f7ff;color:#121927;padding:10px 14px;border-radius:999px;font-size:13px;font-weight:900;opacity:0;pointer-events:none;transition:.2s;z-index:60;box-shadow:var(--shadow)}.toast.show{opacity:1;transform:translate(-50%,0)}
+    .modal{position:fixed;inset:0;display:none;place-items:center;background:rgba(2,7,14,.78);backdrop-filter:blur(5px);z-index:50;padding:20px}.modal.show{display:grid}.modalCard{width:min(92vw,390px);padding:20px;text-align:center}.modalCard h2{margin:0 0 7px}.modalCard p{margin:0 0 15px;color:var(--muted)}.promo{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.promo button{aspect-ratio:1;border-radius:13px;background:#e9eef6;color:#111827;font-size:44px}
+    @media(max-width:760px){.app{padding:8px 7px 22px}.grid{grid-template-columns:1fr}.boardCard{padding:6px;border-radius:17px}.side{padding:13px}.moves{max-height:170px}.brand{font-size:14px}.logo{width:37px;height:37px;font-size:23px}.network{padding:7px 9px}.landing{padding:22px 14px;border-radius:18px}}
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <div class="brand"><div class="logo">♞</div><div>Two Player Chess<small>Private phone-to-phone game</small></div></div>
+      <div class="network"><span id="dot" class="dot"></span><span id="netText">Connecting</span></div>
+    </header>
+
+    <section id="landing" class="card landing">
+      <h1>Play your friend from anywhere.</h1>
+      <p>Open the game on your phone, create a room, and text the private link to your friend. They open it on their phone and the same chess board appears on both devices.</p>
+      <button id="createBtn" class="btn" disabled>Create private game</button>
+      <div id="landingHint" class="tiny">Connecting to the game server…</div>
+    </section>
+
+    <section id="game" class="game">
+      <div class="grid">
+        <div class="card boardCard">
+          <div class="player"><div class="playerLeft"><div class="avatar" id="topAvatar">♚</div><span id="topName">Friend</span></div><span id="topTag" class="tag">Black</span></div>
+          <div id="board" class="board" aria-label="Chess board"></div>
+          <div class="player bottom"><div class="playerLeft"><div class="avatar" id="bottomAvatar">♔</div><span id="bottomName">You</span></div><span id="bottomTag" class="tag">White</span></div>
+        </div>
+
+        <aside class="card side">
+          <div class="eyebrow">Game status</div>
+          <div id="status" class="status">Connecting…</div>
+          <div id="sub" class="sub">Opening the room.</div>
+          <div class="divider"></div>
+
+          <div class="invite">
+            <div class="eyebrow">Private room</div>
+            <div class="roomLine"><span id="roomCode" class="roomCode">------</span><span id="seat" class="tag">—</span></div>
+            <div class="inviteButtons">
+              <button id="copyBtn" class="btn secondary">Copy link</button>
+              <button id="shareBtn" class="btn">Text / Share</button>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+          <div class="eyebrow">Moves</div>
+          <div id="moves" class="moves"><div class="empty">No moves yet.</div></div>
+
+          <div class="controls">
+            <button id="flipBtn" class="btn secondary">Flip board</button>
+            <button id="rematchBtn" class="btn secondary">Rematch</button>
+            <button id="resignBtn" class="btn danger">Resign</button>
+            <button id="newBtn" class="btn">New game</button>
+          </div>
+          <div class="tiny">Moves are validated by the server, including check, checkmate, castling, en passant and promotion.</div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <div id="promotion" class="modal">
+    <div class="card modalCard">
+      <h2>Promote pawn</h2>
+      <p>Choose a piece.</p>
+      <div class="promo">
+        <button data-promo="q">♛</button><button data-promo="r">♜</button><button data-promo="b">♝</button><button data-promo="n">♞</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const PIECES = {w:{k:'♔',q:'♕',r:'♖',b:'♗',n:'♘',p:'♙'},b:{k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'}};
+    const filesWhite = ['a','b','c','d','e','f','g','h'];
+    let ws = null, state = null, room = new URLSearchParams(location.search).get('room');
+    room = room ? room.toUpperCase() : null;
+    let myColor = null, selected = null, flipped = false, pendingPromotion = null, reconnectTimer = null, firstConnect = true;
+
+    function setNet(text, cls='') { $('netText').textContent = text; $('dot').className = 'dot ' + cls; }
+    function toast(text) { $('toast').textContent = text; $('toast').classList.add('show'); setTimeout(()=>$('toast').classList.remove('show'),1800); }
+    function tokenKey(r){ return 'two_player_chess_token_' + r; }
+    function inviteUrl(){ return location.origin + location.pathname + '?room=' + encodeURIComponent(room); }
+    function send(payload){ if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload)); }
+
+    function connect(){
+      clearTimeout(reconnectTimer);
+      setNet('Connecting','wait');
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(proto + '//' + location.host);
+      ws.onopen = () => {
+        setNet('Online','ok');
+        $('createBtn').disabled = false;
+        $('landingHint').textContent = 'Server connected. Create a game when you are ready.';
+        if (room) send({type:'join', room, token: localStorage.getItem(tokenKey(room)) || ''});
+        firstConnect = false;
+      };
+      ws.onmessage = e => {
+        let msg; try{ msg = JSON.parse(e.data); }catch{return;}
+        if (msg.type === 'created' || msg.type === 'joined') {
+          room = msg.room;
+          myColor = msg.color;
+          if (msg.token) localStorage.setItem(tokenKey(room), msg.token);
+          history.replaceState({},'',location.pathname + '?room=' + encodeURIComponent(room));
+          showGame();
+          return;
+        }
+        if (msg.type === 'state') {
+          state = msg.state; myColor = msg.color;
+          selected = null;
+          render();
+          return;
+        }
+        if (msg.type === 'error') {
+          toast(msg.message || 'Game error');
+          if (msg.code === 'ROOM_NOT_FOUND') {
+            room = null; myColor = null; state = null;
+            history.replaceState({},'',location.pathname);
+            $('game').classList.remove('show'); $('landing').classList.remove('hide');
+            $('landingHint').textContent = 'That room expired. Create a new game.';
+          }
+        }
+      };
+      ws.onclose = () => {
+        setNet('Reconnecting','wait');
+        $('createBtn').disabled = true;
+        reconnectTimer = setTimeout(connect, 1200);
+      };
+      ws.onerror = () => setNet('Connection issue','bad');
+    }
+
+    function showGame(){
+      $('landing').classList.add('hide');
+      $('game').classList.add('show');
+      $('roomCode').textContent = room || '------';
+      if (myColor === 'b' && !flipped) flipped = false;
+    }
+
+    function parseFen(fen){
+      const map = {};
+      if (!fen) return map;
+      const rows = fen.split(' ')[0].split('/');
+      rows.forEach((row,ri)=>{
+        let fi=0;
+        for(const ch of row){
+          if (/\d/.test(ch)) { fi += Number(ch); continue; }
+          const color = ch === ch.toUpperCase() ? 'w' : 'b';
+          const type = ch.toLowerCase();
+          map[filesWhite[fi] + (8-ri)] = {color,type}; fi++;
+        }
+      });
+      return map;
+    }
+
+    function orientation(){
+      const base = myColor === 'b' ? 'b' : 'w';
+      const color = flipped ? (base === 'w' ? 'b' : 'w') : base;
+      return color;
+    }
+
+    function renderBoard(){
+      if (!state) return;
+      const map = parseFen(state.fen);
+      const orient = orientation();
+      const files = orient === 'w' ? filesWhite : [...filesWhite].reverse();
+      const ranks = orient === 'w' ? [8,7,6,5,4,3,2,1] : [1,2,3,4,5,6,7,8];
+      const legal = selected ? state.legalMoves.filter(m=>m.from===selected) : [];
+      const last = state.history.length ? state.history[state.history.length-1] : null;
+      $('board').innerHTML = '';
+      ranks.forEach((rank,ri)=>files.forEach((file,fi)=>{
+        const sqName = file + rank, piece = map[sqName];
+        const sq = document.createElement('button');
+        sq.className = 'sq ' + ((ri+fi)%2===0?'light':'dark');
+        if (selected === sqName) sq.classList.add('selected');
+        if (last && (last.from===sqName || last.to===sqName)) sq.classList.add('last');
+        const target = legal.find(m=>m.to===sqName);
+        if (target) sq.classList.add(piece ? 'capture' : 'target');
+        sq.setAttribute('aria-label', sqName);
+        if (piece) {
+          const p = document.createElement('span'); p.className = 'piece ' + (piece.color==='w'?'white':'black'); p.textContent = PIECES[piece.color][piece.type]; sq.appendChild(p);
+        }
+        if (ri===7){ const c=document.createElement('span'); c.className='coord file'; c.textContent=file; sq.appendChild(c); }
+        if (fi===0){ const c=document.createElement('span'); c.className='coord rank'; c.textContent=rank; sq.appendChild(c); }
+        sq.onclick = () => clickSquare(sqName,map);
+        $('board').appendChild(sq);
+      }));
+    }
+
+    function clickSquare(square,map){
+      if (!state || !myColor || state.gameOver || state.turn !== myColor) return;
+      const piece = map[square];
+      if (!selected) {
+        if (piece && piece.color === myColor && state.legalMoves.some(m=>m.from===square)) { selected=square; renderBoard(); }
+        return;
+      }
+      if (piece && piece.color === myColor) { selected=square; renderBoard(); return; }
+      const choices = state.legalMoves.filter(m=>m.from===selected && m.to===square);
+      if (!choices.length) { selected=null; renderBoard(); return; }
+      const promotionMoves = choices.filter(m=>m.promotion);
+      if (promotionMoves.length) { pendingPromotion={from:selected,to:square}; $('promotion').classList.add('show'); return; }
+      send({type:'move',from:selected,to:square}); selected=null;
+    }
+
+    function renderStatus(){
+      if (!state) return;
+      $('roomCode').textContent = room || '------';
+      $('seat').textContent = myColor === 'w' ? 'You: White' : myColor === 'b' ? 'You: Black' : 'Spectator';
+      const connected = state.whiteConnected && state.blackConnected;
+      if (state.gameOver) { $('status').textContent = state.result || 'Game over'; $('sub').textContent = 'Tap Rematch to play again.'; }
+      else if (!myColor) { $('status').textContent='Watching game'; $('sub').textContent='This room already has two players.'; }
+      else if (!connected) { $('status').textContent='Waiting for friend'; $('sub').textContent='Send the private room link. The game starts as soon as both phones are connected.'; }
+      else if (state.turn === myColor) { $('status').textContent = state.check ? 'Your turn — CHECK' : 'Your turn'; $('sub').textContent='Tap one of your pieces, then tap a highlighted square.'; }
+      else { $('status').textContent = state.check ? 'Friend is in check' : "Friend's turn"; $('sub').textContent='The board will update automatically after their move.'; }
+      $('resignBtn').disabled = !myColor || state.gameOver;
+      $('rematchBtn').disabled = !myColor;
+      $('topTag').classList.remove('active'); $('bottomTag').classList.remove('active');
+      const orient=orientation();
+      const topColor = orient==='w'?'b':'w', bottomColor=orient;
+      const topMine = myColor===topColor, bottomMine=myColor===bottomColor;
+      $('topName').textContent = topMine ? 'You' : (myColor ? 'Friend' : (topColor==='w'?'White':'Black'));
+      $('bottomName').textContent = bottomMine ? 'You' : (myColor ? 'Friend' : (bottomColor==='w'?'White':'Black'));
+      $('topTag').textContent = topColor==='w'?'White':'Black'; $('bottomTag').textContent = bottomColor==='w'?'White':'Black';
+      $('topAvatar').textContent = topColor==='w'?'♔':'♚'; $('bottomAvatar').textContent = bottomColor==='w'?'♔':'♚';
+      if (!state.gameOver && state.turn===topColor) $('topTag').classList.add('active');
+      if (!state.gameOver && state.turn===bottomColor) $('bottomTag').classList.add('active');
+    }
+
+    function renderMoves(){
+      if (!state || !state.history.length) { $('moves').innerHTML='<div class="empty">No moves yet.</div>'; return; }
+      let html='';
+      for(let i=0;i<state.history.length;i+=2){
+        const w=state.history[i], b=state.history[i+1];
+        html += `<div class="moveRow"><span class="moveNo">${Math.floor(i/2)+1}.</span><span class="moveCell">${w?w.san:''}</span><span class="moveCell">${b?b.san:''}</span></div>`;
+      }
+      $('moves').innerHTML=html; $('moves').scrollTop=$('moves').scrollHeight;
+    }
+    function render(){ showGame(); renderBoard(); renderStatus(); renderMoves(); }
+
+    $('createBtn').onclick = () => { $('createBtn').disabled=true; $('createBtn').textContent='Creating game…'; send({type:'create'}); };
+    $('copyBtn').onclick = async()=>{ try{await navigator.clipboard.writeText(inviteUrl());toast('Game link copied');}catch{toast('Press Share to send the link');} };
+    $('shareBtn').onclick = async()=>{ const data={title:'Play chess with me',text:'Open this private chess game and play me:',url:inviteUrl()}; if(navigator.share){try{await navigator.share(data);}catch{}} else {try{await navigator.clipboard.writeText(inviteUrl());toast('Game link copied');}catch{}} };
+    $('flipBtn').onclick = ()=>{flipped=!flipped;render();};
+    $('resignBtn').onclick = ()=>{ if(myColor && state && !state.gameOver && confirm('Resign this game?')) send({type:'resign'}); };
+    $('rematchBtn').onclick = ()=>{ send({type:'rematch'}); toast('Rematch requested'); };
+    $('newBtn').onclick = ()=>{ if(confirm('Create a new private game?')) { room=null; state=null; myColor=null; selected=null; flipped=false; send({type:'create'}); } };
+    document.querySelectorAll('[data-promo]').forEach(btn=>btn.onclick=()=>{ if(!pendingPromotion)return; send({type:'move',from:pendingPromotion.from,to:pendingPromotion.to,promotion:btn.dataset.promo}); pendingPromotion=null;selected=null;$('promotion').classList.remove('show'); });
+    window.addEventListener('online',connect);
+    connect();
+  </script>
+</body>
+</html>
