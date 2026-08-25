@@ -1,0 +1,14 @@
+{
+  "name": "two-player-chess",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
+  }
+}
