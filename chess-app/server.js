@@ -47,13 +47,19 @@ function serializedState(room) {
     from: m.from, to: m.to, san: m.san, color: m.color, piece: m.piece,
     captured: m.captured || null, promotion: m.promotion || null
   }));
+  const legalMoves = room.chess.moves({ verbose: true }).map(m => ({
+    from: m.from, to: m.to, san: m.san, promotion: m.promotion || null,
+    captured: m.captured || null
+  }));
+  const result = gameResult(room);
   return {
     fen: room.chess.fen(),
     turn: room.chess.turn(),
     check: room.chess.isCheck(),
-    gameOver: !!gameResult(room),
-    result: gameResult(room),
+    gameOver: !!result,
+    result,
     history,
+    legalMoves,
     whiteConnected: !!room.white.ws,
     blackConnected: !!room.black.ws,
     rematchWhite: room.rematch.has('w'),
@@ -62,7 +68,7 @@ function serializedState(room) {
 }
 function sendState(room) {
   room.lastActive = Date.now();
-  for (const side of ['white','black']) {
+  for (const side of ['white', 'black']) {
     const slot = room[side];
     safeSend(slot.ws, { type: 'state', room: room.id, color: side === 'white' ? 'w' : 'b', state: serializedState(room) });
   }
@@ -82,6 +88,8 @@ function detach(ws) {
   if (ws.playerColor === 'w' && room.white.ws === ws) room.white.ws = null;
   else if (ws.playerColor === 'b' && room.black.ws === ws) room.black.ws = null;
   else room.spectators.delete(ws);
+  ws.roomId = null;
+  ws.playerColor = null;
   sendState(room);
 }
 function joinRoom(ws, roomId, suppliedToken) {
@@ -104,6 +112,7 @@ function joinRoom(ws, roomId, suppliedToken) {
 
 wss.on('connection', (ws) => {
   safeSend(ws, { type: 'hello' });
+
   ws.on('message', raw => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
@@ -132,6 +141,7 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'join') return joinRoom(ws, msg.room, msg.token);
+
     const room = rooms.get(ws.roomId);
     if (!room) return safeSend(ws, { type: 'error', message: 'Open or create a game first.' });
 
@@ -141,7 +151,11 @@ wss.on('connection', (ws) => {
       if (gameResult(room)) return safeSend(ws, { type: 'error', message: 'This game is already over.' });
       if (room.chess.turn() !== color) return safeSend(ws, { type: 'error', message: 'It is not your turn.' });
       try {
-        const move = room.chess.move({ from: String(msg.from || ''), to: String(msg.to || ''), promotion: String(msg.promotion || 'q') });
+        const move = room.chess.move({
+          from: String(msg.from || ''),
+          to: String(msg.to || ''),
+          promotion: String(msg.promotion || 'q')
+        });
         if (!move) throw new Error('Illegal move');
         room.rematch.clear();
         sendState(room);
@@ -170,6 +184,7 @@ wss.on('connection', (ws) => {
       return;
     }
   });
+
   ws.on('close', () => detach(ws));
   ws.on('error', () => detach(ws));
 });
