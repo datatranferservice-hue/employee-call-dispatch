@@ -5,6 +5,7 @@ import path from "node:path";
 import { query, transaction, healthcheck } from "./db.js";
 import { chooseEmployee, isWithinBusinessHours, normalizeStrategy } from "./routing.js";
 import { canCreateRole, isTerminalCallStatus, isValidCallStatus } from "./policy.js";
+import { telephonyStatus, placeTestCall } from "./telephony.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -106,7 +107,14 @@ const webhookAuthorized = req => {
 app.get("/api/health", async (_req, res, next) => {
   try {
     const database = await healthcheck();
-    res.json({ ok: true, service: "CallFlow Command", version: "2.1.0", database: "connected", databaseTime: database.database_time });
+    res.json({
+      ok: true,
+      service: "CallFlow Command",
+      version: "2.1.1",
+      database: "connected",
+      databaseTime: database.database_time,
+      telephony: telephonyStatus()
+    });
   } catch (error) { next(error); }
 });
 
@@ -135,6 +143,49 @@ app.post("/api/auth/logout", auth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 app.get("/api/me", auth, (req, res) => res.json({ ok: true, user: req.user }));
+
+app.get("/api/admin/telephony/status", auth, requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const employee = await query(`SELECT id,active,phone_verified,phone_approved,
+      (forwarding_phone IS NOT NULL AND length(trim(forwarding_phone)) > 0) AS has_forwarding_phone
+      FROM employees WHERE organization_id=$1 AND user_id=$2 LIMIT 1`, [req.user.organization_id, req.user.id]);
+    const ownerEmployee = employee.rows[0] || null;
+    const ownerPhoneReady = Boolean(ownerEmployee?.active && ownerEmployee?.phone_verified && ownerEmployee?.phone_approved && ownerEmployee?.has_forwarding_phone);
+    const status = telephonyStatus();
+    res.json({
+      ok: true,
+      telephony: status,
+      ownerPhoneReady,
+      readyForOutboundTest: Boolean(status.configured && status.outboundTestSupported && ownerPhoneReady)
+    });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/admin/telephony/test-call", auth, requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const employee = await query(`SELECT id,forwarding_phone,active,phone_verified,phone_approved
+      FROM employees WHERE organization_id=$1 AND user_id=$2 LIMIT 1`, [req.user.organization_id, req.user.id]);
+    if (!employee.rowCount) return jsonError(res, 400, "Owner account has no employee profile");
+    const target = employee.rows[0];
+    if (!target.active || !target.phone_verified || !target.phone_approved || !target.forwarding_phone) {
+      return jsonError(res, 409, "Owner forwarding phone must be saved, verified, approved and active before a test call");
+    }
+    const status = telephonyStatus();
+    if (!status.configured) return jsonError(res, 503, "Telephony provider is not fully configured");
+    const call = await placeTestCall(target.forwarding_phone);
+    await audit(req.user.organization_id, req.user.id, "telephony.test_call", {
+      provider: call.provider,
+      providerCallId: call.providerCallId,
+      status: call.status,
+      employeeId: target.id
+    });
+    res.status(202).json({ ok: true, call });
+  } catch (error) {
+    if (error?.code === "TELEPHONY_NOT_CONFIGURED") return jsonError(res, 503, error.message);
+    if (error?.code === "TELEPHONY_PROVIDER_ERROR") return jsonError(res, 502, "Telephony provider rejected the test call request");
+    next(error);
+  }
+});
 
 app.get("/api/dashboard", auth, async (req, res, next) => {
   try {
@@ -233,8 +284,6 @@ app.post("/api/appointments", auth, async (req, res, next) => {
 
 async function routeInbound(organizationId, callerPhone, providerCallId) {
   return transaction(async client => {
-    // Serialize retries for the same provider call before reading or assigning employees.
-    // This prevents concurrent duplicate webhooks from marking multiple employees busy.
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [String(providerCallId)]);
     const settingsResult = await client.query("SELECT * FROM organization_settings WHERE organization_id=$1 FOR UPDATE", [organizationId]);
     const settings = settingsResult.rows[0];
