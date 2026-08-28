@@ -4,6 +4,10 @@ export function aiConfigured() {
   return Boolean(process.env.OPENAI_API_KEY);
 }
 
+export function ownerTransferConfigured() {
+  return Boolean(process.env.OWNER_TRANSFER_NUMBER);
+}
+
 export function buildInstructions({ script, lead, company = "Sentinel Zero" }) {
   return [
     script?.system_prompt || "You are a professional outbound business development voice agent.",
@@ -14,8 +18,9 @@ export function buildInstructions({ script, lead, company = "Sentinel Zero" }) {
     "Your goal is only to identify the right decision-maker, briefly qualify whether there is a relevant operational/cybersecurity need, and if appropriate request a short discovery appointment with a human closer.",
     "If a discovery time is agreed, call book_discovery with an ISO-8601 scheduled_at value and a short factual note.",
     "If the prospect requests a callback, call request_callback with the agreed callback time.",
+    "If the prospect explicitly asks to speak to the owner/human closer now, call transfer_to_owner. Never transfer merely to pressure or surprise the prospect.",
     "If the prospect says stop, do not call, remove me, or otherwise opts out, briefly confirm the request and call mark_do_not_call immediately.",
-    "At the end of a connected call that did not book, opt out, or request a callback, call record_disposition exactly once with the best factual outcome.",
+    "At the end of a connected call that did not book, opt out, transfer, or request a callback, call record_disposition exactly once with the best factual outcome.",
     "Do not claim HIPAA compliance, guaranteed breach prevention, guaranteed insurance savings, audit completion, monitoring, legal conclusions, or guaranteed results.",
     "Do not quote final pricing unless the script explicitly authorizes it.",
     "If asked whether you are human, answer truthfully that you are an AI voice assistant.",
@@ -66,8 +71,19 @@ const tools = [
   },
   {
     type: "function",
+    name: "transfer_to_owner",
+    description: "Transfer the current call to the configured human owner/closer only after the prospect explicitly asks or agrees to speak with a human now. The destination number is controlled by the server and is never supplied by the model.",
+    parameters: {
+      type: "object",
+      properties: { reason: { type: "string", description: "Short factual reason the prospect requested a live human transfer." } },
+      required: ["reason"],
+      additionalProperties: false
+    }
+  },
+  {
+    type: "function",
     name: "record_disposition",
-    description: "Record the final outcome of a connected call when no appointment, callback, or opt-out tool has already been used.",
+    description: "Record the final outcome of a connected call when no appointment, callback, transfer, or opt-out tool has already been used.",
     parameters: {
       type: "object",
       properties: {
@@ -114,6 +130,26 @@ export async function acceptRealtimeSipCall({ callId, instructions }) {
     throw new Error(`OpenAI Realtime accept failed (${response.status}): ${body.slice(0, 500)}`);
   }
   return { ok: true };
+}
+
+export async function referRealtimeCallToOwner(callId) {
+  if (!aiConfigured()) throw new Error("OPENAI_API_KEY is not configured");
+  if (!ownerTransferConfigured()) throw new Error("OWNER_TRANSFER_NUMBER is not configured");
+  const target = String(process.env.OWNER_TRANSFER_NUMBER).replace(/[^+\d]/g, "");
+  if (!/^\+\d{8,15}$/.test(target)) throw new Error("OWNER_TRANSFER_NUMBER must be in E.164 format");
+  const response = await fetch(`${apiBase}/realtime/calls/${encodeURIComponent(callId)}/refer`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ target_uri: `tel:${target}` })
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenAI Realtime refer failed (${response.status}): ${body.slice(0, 500)}`);
+  }
+  return { ok: true, transferred: true };
 }
 
 export function extractIncomingCall(payload) {
