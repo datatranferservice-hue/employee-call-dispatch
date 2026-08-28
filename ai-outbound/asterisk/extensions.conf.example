@@ -1,0 +1,23 @@
+; Sentinel Zero AI Outbound Caller
+; Example dialplan only. Replace placeholders and validate against your Asterisk/SIP carrier environment.
+;
+; Flow:
+; 1) Render originates the prospect channel through ARI.
+; 2) This context runs ONLY after the prospect answers.
+; 3) Asterisk dials OpenAI's project SIP endpoint and adds the durable session correlation header.
+; 4) OpenAI sends realtime.call.incoming to the Render webhook, which accepts the AI session.
+
+[ssag-ai-outbound]
+exten => start,1,NoOp(Sentinel Zero AI outbound answered; session=${SSAG_SESSION_ID})
+ same => n,GotoIf($["${SSAG_SESSION_ID}"=""]?missing_session)
+ ; OPENAI_PROJECT_ID must be provided to Asterisk as a global/channel variable or substituted at deployment.
+ same => n,Dial(PJSIP/openai/sip:${OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls,60,b(ssag-openai-headers^add^1(${SSAG_SESSION_ID})))
+ same => n,Hangup()
+ same => n(missing_session),Log(ERROR,Missing SSAG_SESSION_ID; refusing OpenAI bridge)
+ same => n,Hangup()
+
+[ssag-openai-headers]
+exten => add,1,NoOp(Add SSAG session correlation header to OpenAI leg)
+ same => n,Set(PJSIP_HEADER(add,X-SSAG-Session-ID)=${ARG1})
+ same => n,Set(PJSIP_HEADER(add,X-SSAG-Source)=sentinel-zero-ai-outbound)
+ same => n,Return()
