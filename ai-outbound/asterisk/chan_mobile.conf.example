@@ -1,0 +1,23 @@
+; Sentinel Zero AI Outbound Caller - Bluetooth cellphone trunk
+; Official Asterisk chan_mobile uses a Linux Bluetooth adapter plus a paired phone.
+; Discover the adapter/phone addresses and RFCOMM port on the Asterisk host; do not commit real values.
+
+[general]
+interval=30
+
+[adapter]
+id=ssag-bt
+address=__ASTERISK_BLUETOOTH_ADAPTER_MAC__
+
+[owner_cell]
+address=__CELLPHONE_BLUETOOTH_MAC__
+port=__RFCOMM_PORT_FROM_MOBILE_SEARCH__
+context=from-owner-cell
+adapter=ssag-bt
+group=1
+
+; For this mode set the Render service/Asterisk control configuration to:
+; ASTERISK_CHANNEL_TEMPLATE=Mobile/owner_cell/{phone}
+;
+; Asterisk's documented outbound syntax is Mobile/<device>/<number>.
+; The phone must remain Bluetooth-paired, in range, available, and compatible with chan_mobile.
