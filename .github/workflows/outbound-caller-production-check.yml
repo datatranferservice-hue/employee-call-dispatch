@@ -1,0 +1,52 @@
+name: Outbound Caller Production Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ai-outbound/**'
+      - '.github/workflows/outbound-caller-production-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install outbound caller dependencies
+        working-directory: ai-outbound
+        run: npm install --ignore-scripts
+
+      - name: Syntax check outbound caller
+        working-directory: ai-outbound
+        run: npm run check
+
+      - name: Verify deployed health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEALTH="$(curl --fail --silent --show-error --retry 4 --retry-delay 5 --max-time 20 https://sentinel-zero-ai-outbound.onrender.com/health)"
+          echo "$HEALTH" | jq .
+          echo "$HEALTH" | jq -e '.ok == true'
+          echo "$HEALTH" | jq -e '.service == "Sentinel Zero AI Outbound Caller"'
+          if echo "$HEALTH" | jq -e '.components.liveDialing == true and .liveReady != true' >/dev/null; then
+            echo 'Unsafe state: live dialing is enabled while production readiness is false.' >&2
+            exit 1
+          fi
+
+      - name: Confirm live dialing remains fail-closed until acceptance
+        shell: bash
+        run: |
+          HEALTH="$(curl --fail --silent --show-error --max-time 20 https://sentinel-zero-ai-outbound.onrender.com/health)"
+          echo "$HEALTH" | jq -e '.components.liveDialing == false or .liveReady == true'
