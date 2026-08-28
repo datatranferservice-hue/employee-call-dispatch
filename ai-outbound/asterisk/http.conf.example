@@ -1,0 +1,9 @@
+; Sentinel Zero AI Outbound Caller - Asterisk HTTP/ARI template
+; Bind to a private/VPN interface whenever possible. If ARI must be reached remotely,
+; put it behind TLS and strict IP/network access controls.
+
+[general]
+enabled=yes
+bindaddr=127.0.0.1
+bindport=8088
+; For a remote Render control plane, expose this only through a secured tunnel/reverse proxy.
