@@ -4,6 +4,7 @@ import { leadGate, assertTestDestination } from "./compliance.js";
 import { originate } from "./transport.js";
 
 const outcomes = new Set(["no_answer","voicemail","connected","callback","appointment","not_interested","wrong_number","do_not_call"]);
+const retryableOutcomes = new Set(["no_answer", "voicemail"]);
 
 export async function snapshot() {
   const result = await query(`SELECT
@@ -13,8 +14,14 @@ export async function snapshot() {
     (SELECT count(*)::int FROM ai_campaigns) campaigns,
     (SELECT count(*)::int FROM ai_campaigns WHERE status='running') running_campaigns,
     (SELECT count(*)::int FROM ai_campaign_leads WHERE status IN ('queued','retry')) queued,
+    (SELECT count(*)::int FROM ai_campaign_leads WHERE status='skipped') skipped,
+    (SELECT count(*)::int FROM ai_campaign_leads WHERE status='completed') completed_campaign_leads,
     (SELECT count(*)::int FROM ai_call_sessions) sessions,
+    (SELECT count(*)::int FROM ai_call_sessions WHERE status='dialing') dialing_sessions,
     (SELECT count(*)::int FROM ai_call_sessions WHERE status='active') active_sessions,
+    (SELECT count(*)::int FROM ai_call_sessions WHERE status='completed' AND transport='asterisk') live_completed_sessions,
+    (SELECT count(*)::int FROM ai_call_sessions WHERE transport='simulation') simulation_sessions,
+    (SELECT count(*)::int FROM call_attempts WHERE outcome='callback') callbacks,
     (SELECT count(*)::int FROM appointments WHERE source='ai') ai_appointments`);
   return result.rows[0];
 }
@@ -24,7 +31,9 @@ export async function campaignList() {
     c.weekdays_only,c.max_concurrent,c.max_attempts_per_lead,c.retry_minutes,c.max_calls_per_hour,
     c.min_seconds_between_calls,c.compliance_status,c.compliance_notes,c.caller_id,c.last_dispatch_at,
     count(cl.lead_id)::int lead_count,
-    count(cl.lead_id) FILTER (WHERE cl.status IN ('queued','retry'))::int queued_count
+    count(cl.lead_id) FILTER (WHERE cl.status IN ('queued','retry'))::int queued_count,
+    count(cl.lead_id) FILTER (WHERE cl.status='skipped')::int skipped_count,
+    count(cl.lead_id) FILTER (WHERE cl.status='completed')::int completed_count
     FROM ai_campaigns c LEFT JOIN ai_campaign_leads cl ON cl.campaign_id=c.id
     GROUP BY c.id ORDER BY c.created_at DESC`);
   return result.rows;
@@ -50,6 +59,11 @@ async function reserveLead(campaignId) {
     if (campaign.status !== "running") throw new Error("Campaign is not running");
     const active = await client.query(`SELECT count(*)::int count FROM ai_call_sessions WHERE campaign_id=$1 AND status IN ('dialing','active')`, [campaignId]);
     if (active.rows[0].count >= campaign.max_concurrent) return { idle: true, reason: "max_concurrent" };
+    if (campaign.last_dispatch_at && Date.now() - new Date(campaign.last_dispatch_at).getTime() < campaign.min_seconds_between_calls * 1000) {
+      return { idle: true, reason: "rate_spacing" };
+    }
+    const recent = await client.query(`SELECT count(*)::int count FROM ai_call_sessions WHERE campaign_id=$1 AND started_at>=now()-interval '1 hour'`, [campaignId]);
+    if (recent.rows[0].count >= campaign.max_calls_per_hour) return { idle: true, reason: "hourly_limit" };
     const row = await client.query(`SELECT cl.*,l.* FROM ai_campaign_leads cl JOIN leads l ON l.id=cl.lead_id
       WHERE cl.campaign_id=$1 AND cl.status IN ('queued','retry') AND cl.next_attempt_at<=now()
         AND cl.attempts < $2
@@ -103,7 +117,8 @@ export async function createTestSession({ phone, companyName = "Owner Test Call"
 }
 
 export async function markAnswered(sessionId) {
-  const result = await query(`UPDATE ai_call_sessions SET status='active',answered_at=COALESCE(answered_at,now()),updated_at=now() WHERE id=$1 RETURNING *`, [sessionId]);
+  const result = await query(`UPDATE ai_call_sessions SET status='active',answered_at=COALESCE(answered_at,now()),updated_at=now()
+    WHERE id=$1 AND status IN ('queued','dialing','active') RETURNING *`, [sessionId]);
   return result.rows[0] || null;
 }
 
@@ -113,6 +128,9 @@ export async function finishSession(sessionId, { outcome, summary = null, callba
     const sessionResult = await client.query(`SELECT * FROM ai_call_sessions WHERE id=$1 FOR UPDATE`, [sessionId]);
     if (!sessionResult.rowCount) throw new Error("Session not found");
     const s = sessionResult.rows[0];
+    if (s.status === "completed" && s.disposition) {
+      return { ok: true, sessionId, outcome: s.disposition, duplicate: true };
+    }
     await client.query(`UPDATE ai_call_sessions SET status='completed',disposition=$2,summary=$3,ended_at=COALESCE(ended_at,now()),updated_at=now() WHERE id=$1`, [sessionId, outcome, summary]);
     await client.query(`INSERT INTO call_attempts(organization_id,lead_id,started_at,ended_at,duration_seconds,ai_session_id,outcome,notes,next_action_at)
       VALUES($1,$2,$3,now(),GREATEST(0,EXTRACT(EPOCH FROM (now()-$3))::int),$4,$5,$6,$7)
@@ -130,8 +148,18 @@ export async function finishSession(sessionId, { outcome, summary = null, callba
       await client.query(`UPDATE leads SET status='working',last_contact_at=now(),updated_at=now() WHERE id=$1`, [s.lead_id]);
     }
     if (s.campaign_id) {
-      const status = outcome === "callback" ? "retry" : "completed";
-      await client.query(`UPDATE ai_campaign_leads SET status=$3,next_attempt_at=COALESCE($4,next_attempt_at),updated_at=now() WHERE campaign_id=$1 AND lead_id=$2`, [s.campaign_id, s.lead_id, status, callbackAt]);
+      const campaignState = await client.query(`SELECT cl.attempts,c.max_attempts_per_lead,c.retry_minutes
+        FROM ai_campaign_leads cl JOIN ai_campaigns c ON c.id=cl.campaign_id
+        WHERE cl.campaign_id=$1 AND cl.lead_id=$2 FOR UPDATE OF cl`, [s.campaign_id, s.lead_id]);
+      const state = campaignState.rows[0];
+      let queueStatus = "completed";
+      let nextAttempt = callbackAt;
+      if (outcome === "callback") queueStatus = "retry";
+      else if (retryableOutcomes.has(outcome) && state && state.attempts < state.max_attempts_per_lead) {
+        queueStatus = "retry";
+        nextAttempt = new Date(Date.now() + state.retry_minutes * 60_000).toISOString();
+      }
+      await client.query(`UPDATE ai_campaign_leads SET status=$3,next_attempt_at=COALESCE($4,next_attempt_at),updated_at=now() WHERE campaign_id=$1 AND lead_id=$2`, [s.campaign_id, s.lead_id, queueStatus, nextAttempt]);
     }
     return { ok: true, sessionId, outcome };
   });
@@ -147,4 +175,19 @@ export async function bookAppointment(sessionId, scheduledAt, notes = null) {
     RETURNING *`, [context.organization_id, context.lead_id, owner.rows[0]?.id || null, scheduledAt, notes, sessionId]);
   await finishSession(sessionId, { outcome: "appointment", summary: notes || "Appointment booked by AI caller" });
   return result.rows[0];
+}
+
+export async function cleanupStaleDialingSessions() {
+  const staleSeconds = Number(process.env.DIAL_STALE_SECONDS || 75);
+  const result = await query(`SELECT id FROM ai_call_sessions WHERE status='dialing' AND transport='asterisk'
+    AND started_at < now()-($1 || ' seconds')::interval ORDER BY started_at LIMIT 50`, [staleSeconds]);
+  const cleaned = [];
+  for (const row of result.rows) {
+    try {
+      cleaned.push(await finishSession(row.id, { outcome: "no_answer", summary: "No answer or carrier setup did not reach the OpenAI SIP leg before timeout." }));
+    } catch (error) {
+      console.error("stale session cleanup", row.id, error.message);
+    }
+  }
+  return cleaned;
 }
