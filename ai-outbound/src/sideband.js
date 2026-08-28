@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { query } from "./db.js";
 import { bookAppointment, finishSession } from "./engine.js";
+import { referRealtimeCallToOwner } from "./openai.js";
 
 const active = new Map();
 const processedToolCalls = new Set();
@@ -45,7 +46,7 @@ async function toolAlreadyProcessed(sessionId, toolCallId) {
   return result.rowCount > 0;
 }
 
-async function executeTool(sessionId, event) {
+async function executeTool(sessionId, callId, event) {
   const toolCallId = String(event.call_id || "");
   if (!toolCallId || await toolAlreadyProcessed(sessionId, toolCallId)) return { duplicate: true };
   let args = {};
@@ -68,6 +69,12 @@ async function executeTool(sessionId, event) {
   } else if (event.name === "book_discovery") {
     if (!args.scheduled_at) throw new Error("scheduled_at is required");
     result = await bookAppointment(sessionId, args.scheduled_at, args.notes || "Booked by AI outbound caller");
+  } else if (event.name === "transfer_to_owner") {
+    await referRealtimeCallToOwner(callId);
+    result = await finishSession(sessionId, {
+      outcome: "connected",
+      summary: `Transferred to configured human owner/closer. ${args.reason || "Prospect requested human transfer."}`
+    });
   } else if (event.name === "record_disposition") {
     result = await finishSession(sessionId, {
       outcome: args.outcome,
@@ -117,12 +124,12 @@ export function attachRealtimeSideband({ callId, sessionId }) {
         await logTurn(sessionId, "agent", event.transcript, { response_id: event.response_id, item_id: event.item_id });
       } else if (event.type === "response.function_call_arguments.done") {
         try {
-          const result = await executeTool(sessionId, event);
+          const result = await executeTool(sessionId, callId, event);
           send(ws, {
             type: "conversation.item.create",
             item: { type: "function_call_output", call_id: event.call_id, output: JSON.stringify({ ok: true, result }) }
           });
-          send(ws, { type: "response.create" });
+          if (event.name !== "transfer_to_owner") send(ws, { type: "response.create" });
         } catch (error) {
           await query(`INSERT INTO ai_events(session_id,event_type,payload) VALUES($1,'tool.failed',$2)`, [sessionId, {
             call_id: event.call_id,
@@ -150,6 +157,15 @@ export function attachRealtimeSideband({ callId, sessionId }) {
         code,
         reason: String(reason || "").slice(0, 200)
       }]);
+      if (handle.connected) {
+        const state = await query(`SELECT status,disposition FROM ai_call_sessions WHERE id=$1`, [sessionId]);
+        if (state.rows[0]?.status === "active" && !state.rows[0]?.disposition) {
+          await finishSession(sessionId, {
+            outcome: "connected",
+            summary: "Connected AI conversation ended without a more specific disposition."
+          });
+        }
+      }
     } catch (error) { console.error("sideband close log", error.message); }
   });
 
