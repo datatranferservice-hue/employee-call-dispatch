@@ -3,6 +3,7 @@ import { healthcheck, query } from "./db.js";
 import { aiConfigured, acceptRealtimeSipCall, buildInstructions, extractIncomingCall } from "./openai.js";
 import { asteriskConfigured } from "./transport.js";
 import { snapshot, campaignList, dispatchCampaign, sessionContext, markAnswered, finishSession, bookAppointment } from "./engine.js";
+import { attachRealtimeSideband, sidebandStatus } from "./sideband.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -38,7 +39,7 @@ const asteriskAuth = (req, res, next) => {
 app.get("/", (_req, res) => res.json({
   ok: true,
   service: "Sentinel Zero AI Outbound Caller",
-  version: "1.0.0",
+  version: "1.1.0",
   liveDialingEnabled: String(process.env.ALLOW_LIVE_AI_CALLS || "false").toLowerCase() === "true"
 }));
 
@@ -51,13 +52,14 @@ app.get("/health", async (_req, res, next) => {
       databaseTime: db.database_time,
       aiConfigured: aiConfigured(),
       asteriskConfigured: asteriskConfigured(),
-      liveDialingEnabled: String(process.env.ALLOW_LIVE_AI_CALLS || "false").toLowerCase() === "true"
+      liveDialingEnabled: String(process.env.ALLOW_LIVE_AI_CALLS || "false").toLowerCase() === "true",
+      sideband: { active: sidebandStatus().active }
     });
   } catch (error) { next(error); }
 });
 
 app.get("/api/status", adminAuth, async (_req, res, next) => {
-  try { res.json({ ok: true, snapshot: await snapshot(), campaigns: await campaignList() }); }
+  try { res.json({ ok: true, snapshot: await snapshot(), campaigns: await campaignList(), sideband: sidebandStatus() }); }
   catch (error) { next(error); }
 });
 
@@ -91,7 +93,11 @@ app.get("/api/sessions/:id", adminAuth, async (req, res, next) => {
   try {
     const context = await sessionContext(req.params.id);
     if (!context) return jsonError(res, 404, "Session not found");
-    res.json({ ok: true, session: context });
+    const [turns, events] = await Promise.all([
+      query(`SELECT speaker,text,metadata,created_at FROM ai_turns WHERE session_id=$1 ORDER BY id`, [req.params.id]),
+      query(`SELECT event_type,payload,created_at FROM ai_events WHERE session_id=$1 ORDER BY id DESC LIMIT 100`, [req.params.id])
+    ]);
+    res.json({ ok: true, session: context, turns: turns.rows, events: events.rows });
   } catch (error) { next(error); }
 });
 
@@ -140,8 +146,9 @@ app.post("/webhooks/openai", async (req, res, next) => {
       company: "Sentinel Zero"
     });
     await acceptRealtimeSipCall({ callId: incoming.callId, instructions });
+    attachRealtimeSideband({ callId: incoming.callId, sessionId: incoming.sessionId });
     await markAnswered(incoming.sessionId);
-    res.json({ ok: true, accepted: true });
+    res.json({ ok: true, accepted: true, sideband: "attaching" });
   } catch (error) { next(error); }
 });
 
