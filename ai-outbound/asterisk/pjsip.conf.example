@@ -1,0 +1,60 @@
+; Sentinel Zero AI Outbound Caller - PJSIP template
+; Provider credentials are intentionally placeholders.
+; Validate codecs, TLS certificates, NAT, media, caller-ID policy, and emergency-calling restrictions with your SIP carrier.
+
+[transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:5060
+
+[transport-tls]
+type=transport
+protocol=tls
+bind=0.0.0.0:5061
+method=tlsv1_2
+verify_server=yes
+allow_reload=no
+; Set a trusted CA bundle appropriate for the host OS if Asterisk does not use the system trust store.
+; ca_list_file=/etc/ssl/certs/ca-certificates.crt
+
+; ---- Public PSTN/SIP carrier ----
+; Replace every __CARRIER_*__ value with values issued by the chosen carrier.
+[carrier-auth]
+type=auth
+auth_type=userpass
+username=__CARRIER_USERNAME__
+password=__CARRIER_PASSWORD__
+
+[carrier-aor]
+type=aor
+contact=sip:__CARRIER_SIP_HOST__
+
+[carrier]
+type=endpoint
+transport=transport-udp
+outbound_auth=carrier-auth
+aors=carrier-aor
+from_user=__CARRIER_ACCOUNT_OR_NUMBER__
+disallow=all
+allow=ulaw
+allow=alaw
+direct_media=no
+rtp_symmetric=yes
+force_rport=yes
+rewrite_contact=yes
+
+; If the carrier requires registration, add its provider-specific registration section here.
+
+; ---- OpenAI Realtime SIP destination ----
+; OpenAI is addressed by explicit SIP URI in extensions.conf. This endpoint supplies
+; the PJSIP transport/media policy for that outbound leg; no OpenAI SIP password is stored here.
+[openai]
+type=endpoint
+transport=transport-tls
+disallow=all
+allow=ulaw
+allow=alaw
+direct_media=no
+rtp_symmetric=yes
+force_rport=yes
+rewrite_contact=yes
