@@ -1,13 +1,17 @@
 import pg from "pg";
 
 const { Pool } = pg;
-const ssl = String(process.env.DATABASE_SSL || "true").toLowerCase() === "true"
-  ? { rejectUnauthorized: false }
-  : false;
+
+function normalizedConnectionString(raw) {
+  if (!raw) throw new Error("DATABASE_URL is required");
+  const url = new URL(raw);
+  // Preserve the current strict TLS behavior explicitly ahead of pg v9 semantics.
+  if (url.searchParams.get("sslmode") === "require") url.searchParams.set("sslmode", "verify-full");
+  return url.toString();
+}
 
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl,
+  connectionString: normalizedConnectionString(process.env.DATABASE_URL),
   max: Number(process.env.DB_POOL_MAX || 5),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000
