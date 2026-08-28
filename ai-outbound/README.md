@@ -1,55 +1,67 @@
 # Sentinel Zero AI Outbound Caller
 
-Production control-plane service for AI-assisted outbound business calling.
+Autonomous outbound business-calling control plane for Sentinel Zero.
 
-## What this service does
+## Current capability
 
-- Reads approved campaigns and queued leads from the Sentinel Zero Neon database.
-- Enforces campaign status, calling windows, concurrency, retry limits, DNC suppression, and per-lead AI-call permission gates.
-- Creates durable AI call sessions and links them to campaign leads.
-- Supports `simulation` and `asterisk` transports.
-- Provides authenticated owner/admin controls for status, campaign start/pause, dispatch, session completion, and appointment booking.
-- Accepts correlated OpenAI Realtime SIP incoming-call events and supplies a Sentinel Zero voice-agent prompt.
-- Supports Asterisk call-state callbacks for answered/completed calls.
-- Updates leads, callbacks, appointments, and call attempts after a conversation.
+The service now provides the durable pipeline behind an AI cold-calling operation:
+
+`Campaign -> Lead Queue -> Compliance/DNC/Time Gate -> AI Session -> PSTN/SIP -> OpenAI Realtime Voice -> Transcript/Actions -> CRM/Appointment/Follow-up`
+
+Implemented components:
+
+- Neon-backed campaigns, leads, retries, rate limits, AI sessions, events, transcript turns, call attempts, appointments, and DNC suppression.
+- Fail-closed campaign start and dispatch controls.
+- Simulation and Asterisk transports.
+- Asterisk ARI originate adapter for the public telephone leg.
+- OpenAI Realtime SIP call acceptance and server-side sideband control.
+- AI disclosure in the voice-agent instructions.
+- Live prospect and AI transcript persistence.
+- Controlled AI tools for DNC, callback, discovery appointment, final disposition, and human transfer.
+- Human transfer destination is server-controlled through `OWNER_TRANSFER_NUMBER`; the model cannot choose an arbitrary phone number.
+- Signed OpenAI webhook verification when `OPENAI_WEBHOOK_SECRET` is configured, with a temporary bootstrap token fallback.
+- Idempotent call completion so a later close event cannot overwrite a DNC or booked appointment.
+- Retry handling for no-answer/voicemail calls.
+- Stale-dial cleanup for calls that never reach the AI leg.
+- Concurrency, hourly-volume and minimum-spacing controls.
+- Owner/admin status and session APIs.
 
 ## Hard safety gates
 
-Live outbound calling is fail-closed. A real campaign cannot run unless all applicable gates pass:
+A real campaign cannot run unless the service and campaign gates pass. In particular:
 
 1. Campaign compliance status is approved.
-2. Service-level `ALLOW_LIVE_AI_CALLS=true` is explicitly set.
+2. `ALLOW_LIVE_AI_CALLS=true` is explicitly set on the service.
 3. Lead is not marked do-not-call.
 4. Lead has a phone number.
-5. Lead contains the required `[AI_CALL_OK]` permission marker when `REQUIRE_LEAD_AI_PERMISSION_FLAG=true`.
-6. The call is inside the campaign's configured local call window.
-7. Asterisk/SIP transport is configured for live dialing.
-8. The AI identifies itself as an AI voice assistant in the conversation instructions.
+5. Lead contains `[AI_CALL_OK]` while `REQUIRE_LEAD_AI_PERMISSION_FLAG=true`.
+6. Local campaign call window is open.
+7. Asterisk/SIP transport is configured.
+8. OpenAI Realtime voice is configured.
+9. The AI identifies itself as an AI voice assistant.
 
-Do not disable these controls merely to increase call volume.
+Do not remove these controls merely to increase call volume.
 
-## Architecture
+## Cellphone use
 
-`Campaign -> Lead Queue -> Compliance Gate -> AI Call Session -> Asterisk/SIP -> OpenAI Realtime Voice -> Disposition -> Lead/Appointment/Call Attempt`
+A cellphone can be used as the verified business caller identity where the carrier permits it, as an approved test destination, and as the live human handoff destination. It does not itself replace the SIP/PSTN trunk required to carry server-controlled AI audio.
 
-The human Call Command dashboard is separate. It may be used by staff, but this service is the autonomous campaign control plane.
+## Telephone bridge
 
-## Current deployment
+See `asterisk/README.md` and the example Asterisk configuration files. The intended live path is:
+
+`Render -> Asterisk ARI -> PSTN/SIP carrier -> prospect answers -> Asterisk dialplan -> OpenAI Realtime project SIP -> signed OpenAI webhook -> sideband AI control`
+
+## Deployment
 
 Render service: `sentinel-zero-ai-outbound`
 
-Public health/control-plane base URL:
+Base URL: `https://sentinel-zero-ai-outbound.onrender.com`
 
-`https://sentinel-zero-ai-outbound.onrender.com`
+Secrets remain server-side. Do not commit carrier credentials, OpenAI keys, ARI passwords, database credentials, project IDs, or real phone numbers.
 
-Administrative endpoints require the server-side bearer token. Secrets must never be placed in browser code or committed to GitHub.
+## QA
 
-## Required external production dependencies
+The simulation QA campaign successfully exercised campaign dispatch, queue reservation and AI-session completion with a fictional 555 destination. It explicitly recorded that no external telephone call was placed, and the campaign was paused after the test.
 
-A real public telephone call still requires a lawful PSTN/SIP carrier or trunk. A cellphone can be the verified business caller identity and human handoff/test destination where the carrier permits it, but an ordinary cellphone alone is not a server-controlled AI audio trunk.
-
-OpenAI Realtime voice also requires a server-side OpenAI API credential. Keep it in the hosting environment only.
-
-## QA status
-
-The simulation campaign has passed queue reservation and AI-session creation/completion using a fictional 555 destination. No external call was made during that test. The QA campaign is paused after verification.
+A real external AI call is **not** considered live until the carrier/Asterisk/OpenAI production acceptance gate passes end-to-end.
