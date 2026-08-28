@@ -1,9 +1,10 @@
 import express from "express";
 import { healthcheck, query } from "./db.js";
-import { aiConfigured, acceptRealtimeSipCall, buildInstructions, extractIncomingCall } from "./openai.js";
+import { aiConfigured, acceptRealtimeSipCall, buildInstructions, extractIncomingCall, ownerTransferConfigured } from "./openai.js";
 import { asteriskConfigured } from "./transport.js";
-import { snapshot, campaignList, dispatchCampaign, sessionContext, markAnswered, finishSession, bookAppointment } from "./engine.js";
+import { snapshot, campaignList, dispatchCampaign, sessionContext, markAnswered, finishSession, bookAppointment, cleanupStaleDialingSessions } from "./engine.js";
 import { attachRealtimeSideband, sidebandStatus } from "./sideband.js";
+import { verifiedOpenAIEvent, webhookVerificationMode } from "./webhook.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -11,7 +12,10 @@ const WORKER_INTERVAL_MS = Number(process.env.WORKER_INTERVAL_MS || 5000);
 let workerBusy = false;
 
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({
+  limit: "1mb",
+  verify: (req, _res, buffer) => { req.rawBody = buffer.toString("utf8"); }
+}));
 app.use((_req, res, next) => {
   res.set({
     "X-Content-Type-Options": "nosniff",
@@ -23,6 +27,7 @@ app.use((_req, res, next) => {
 });
 
 const jsonError = (res, status, error) => res.status(status).json({ ok: false, error });
+const liveEnabled = () => String(process.env.ALLOW_LIVE_AI_CALLS || "false").toLowerCase() === "true";
 const adminAuth = (req, res, next) => {
   const configured = process.env.ADMIN_API_KEY;
   if (!configured) return jsonError(res, 503, "Admin API key is not configured");
@@ -39,28 +44,50 @@ const asteriskAuth = (req, res, next) => {
 app.get("/", (_req, res) => res.json({
   ok: true,
   service: "Sentinel Zero AI Outbound Caller",
-  version: "1.1.0",
-  liveDialingEnabled: String(process.env.ALLOW_LIVE_AI_CALLS || "false").toLowerCase() === "true"
+  version: "1.2.0",
+  liveDialingEnabled: liveEnabled()
 }));
 
 app.get("/health", async (_req, res, next) => {
   try {
     const db = await healthcheck();
+    const webhookMode = webhookVerificationMode();
+    const components = {
+      database: true,
+      ai: aiConfigured(),
+      asterisk: asteriskConfigured(),
+      webhookVerification: webhookMode,
+      ownerTransfer: ownerTransferConfigured(),
+      liveDialing: liveEnabled()
+    };
     res.json({
       ok: true,
-      database: "connected",
+      service: "Sentinel Zero AI Outbound Caller",
+      version: "1.2.0",
       databaseTime: db.database_time,
-      aiConfigured: aiConfigured(),
-      asteriskConfigured: asteriskConfigured(),
-      liveDialingEnabled: String(process.env.ALLOW_LIVE_AI_CALLS || "false").toLowerCase() === "true",
+      components,
+      liveReady: components.ai && components.asterisk && components.liveDialing && webhookMode !== "unconfigured",
       sideband: { active: sidebandStatus().active }
     });
   } catch (error) { next(error); }
 });
 
 app.get("/api/status", adminAuth, async (_req, res, next) => {
-  try { res.json({ ok: true, snapshot: await snapshot(), campaigns: await campaignList(), sideband: sidebandStatus() }); }
-  catch (error) { next(error); }
+  try {
+    res.json({
+      ok: true,
+      snapshot: await snapshot(),
+      campaigns: await campaignList(),
+      readiness: {
+        aiConfigured: aiConfigured(),
+        asteriskConfigured: asteriskConfigured(),
+        webhookVerification: webhookVerificationMode(),
+        ownerTransferConfigured: ownerTransferConfigured(),
+        liveDialingEnabled: liveEnabled()
+      },
+      sideband: sidebandStatus()
+    });
+  } catch (error) { next(error); }
 });
 
 app.post("/api/campaigns/:id/start", adminAuth, async (req, res, next) => {
@@ -69,9 +96,8 @@ app.post("/api/campaigns/:id/start", adminAuth, async (req, res, next) => {
     if (!campaign.rowCount) return jsonError(res, 404, "Campaign not found");
     const c = campaign.rows[0];
     if (c.compliance_status !== "approved") return jsonError(res, 409, "Campaign compliance must be approved before starting");
-    if (c.transport === "asterisk" && String(process.env.ALLOW_LIVE_AI_CALLS || "false").toLowerCase() !== "true") {
-      return jsonError(res, 409, "Live AI calling is disabled at the service level");
-    }
+    if (c.transport === "asterisk" && !liveEnabled()) return jsonError(res, 409, "Live AI calling is disabled at the service level");
+    if (c.transport === "asterisk" && (!aiConfigured() || !asteriskConfigured())) return jsonError(res, 409, "AI voice and Asterisk transport must both be configured before live campaign start");
     await query(`UPDATE ai_campaigns SET status='running',updated_at=now() WHERE id=$1`, [req.params.id]);
     res.json({ ok: true, status: "running" });
   } catch (error) { next(error); }
@@ -134,12 +160,13 @@ app.post("/webhooks/asterisk/sessions/:id/status", asteriskAuth, async (req, res
 
 app.post("/webhooks/openai", async (req, res, next) => {
   try {
-    if (!process.env.OPENAI_WEBHOOK_TOKEN || req.query.token !== process.env.OPENAI_WEBHOOK_TOKEN) return jsonError(res, 401, "Unauthorized");
-    const incoming = extractIncomingCall(req.body);
+    const event = await verifiedOpenAIEvent(req);
+    const incoming = extractIncomingCall(event);
     if (!incoming) return res.json({ ok: true, ignored: true });
     if (!incoming.callId || !incoming.sessionId) return jsonError(res, 400, "Incoming SIP call is missing call/session correlation");
     const context = await sessionContext(incoming.sessionId);
     if (!context) return jsonError(res, 404, "AI session not found");
+    if (context.status !== "dialing") return jsonError(res, 409, "AI session is not awaiting a SIP call");
     const instructions = buildInstructions({
       script: { system_prompt: context.system_prompt, opening_text: context.opening_text },
       lead: { company_name: context.company_name, contact_name: context.contact_name },
@@ -149,13 +176,17 @@ app.post("/webhooks/openai", async (req, res, next) => {
     attachRealtimeSideband({ callId: incoming.callId, sessionId: incoming.sessionId });
     await markAnswered(incoming.sessionId);
     res.json({ ok: true, accepted: true, sideband: "attaching" });
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (/signature|verification|webhook/i.test(error.message || "")) return jsonError(res, 401, "Invalid webhook");
+    next(error);
+  }
 });
 
 async function workerTick() {
   if (workerBusy || String(process.env.WORKER_ENABLED || "true").toLowerCase() !== "true") return;
   workerBusy = true;
   try {
+    await cleanupStaleDialingSessions();
     const running = await query(`SELECT id FROM ai_campaigns WHERE status='running' ORDER BY updated_at`);
     for (const campaign of running.rows) {
       try { await dispatchCampaign(campaign.id); }
