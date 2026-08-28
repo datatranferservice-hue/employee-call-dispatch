@@ -1,6 +1,6 @@
 {
   "name": "sentinel-zero-ai-outbound",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "express": "^5.1.0",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "ws": "^8.18.3"
   }
 }
