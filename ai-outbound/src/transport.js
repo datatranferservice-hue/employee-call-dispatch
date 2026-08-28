@@ -7,8 +7,7 @@ export function asteriskConfigured() {
     process.env.ASTERISK_ARI_URL &&
     process.env.ASTERISK_ARI_USER &&
     process.env.ASTERISK_ARI_PASSWORD &&
-    process.env.ASTERISK_TRUNK &&
-    process.env.ASTERISK_STASIS_APP
+    process.env.ASTERISK_TRUNK
   );
 }
 
@@ -18,17 +17,26 @@ export async function originateAsterisk({ phone, sessionId, callerId }) {
   const endpoint = `PJSIP/${String(phone).replace(/[^+\d]/g, "")}@${process.env.ASTERISK_TRUNK}`;
   const params = new URLSearchParams({
     endpoint,
-    app: process.env.ASTERISK_STASIS_APP,
-    appArgs: `ssag-outbound,${sessionId}`,
-    timeout: String(Number(process.env.ASTERISK_DIAL_TIMEOUT || 30) * 1000)
+    extension: process.env.ASTERISK_DIAL_EXTENSION || "start",
+    context: process.env.ASTERISK_DIAL_CONTEXT || "ssag-ai-outbound",
+    priority: "1",
+    timeout: String(Number(process.env.ASTERISK_DIAL_TIMEOUT || 30))
   });
   if (callerId) params.set("callerId", callerId);
+
   const response = await fetch(`${base}/ari/channels?${params}`, {
     method: "POST",
     headers: {
       Authorization: basicAuth(process.env.ASTERISK_ARI_USER, process.env.ASTERISK_ARI_PASSWORD),
-      Accept: "application/json"
-    }
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      variables: {
+        SSAG_SESSION_ID: sessionId,
+        SSAG_SOURCE: "sentinel-zero-ai-outbound"
+      }
+    })
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`Asterisk originate failed (${response.status}): ${text.slice(0, 500)}`);
