@@ -1,0 +1,12 @@
+; Sentinel Zero AI Outbound Caller - ARI example
+; Never expose ARI directly to the public internet without network restrictions/TLS/reverse-proxy controls.
+
+[general]
+enabled = yes
+pretty = no
+allowed_origins = https://sentinel-zero-ai-outbound.onrender.com
+
+[ssag-ai-outbound]
+type = user
+read_only = no
+password = __GENERATE_A_LONG_RANDOM_PASSWORD__
