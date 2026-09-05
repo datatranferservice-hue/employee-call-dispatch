@@ -45,6 +45,10 @@ export function attachMarketing(app) {
     res.set("X-Robots-Tag", "noindex, nofollow");
     res.sendFile(path.join(PUBLIC_DIR, "sales.html"));
   });
+  app.get("/playbook", salesAuth, (_req, res) => {
+    res.set("X-Robots-Tag", "noindex, nofollow");
+    res.sendFile(path.join(PUBLIC_DIR, "playbook.html"));
+  });
 
   app.post("/api/public/leads", leadRateLimit, async (req, res, next) => {
     try {
