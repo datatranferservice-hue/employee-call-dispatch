@@ -7,6 +7,9 @@ import { query } from "./db.js";
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 const attempts = new Map();
 const clean = (value, max = 500) => String(value || "").trim().slice(0, max);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LEAD_STATUSES = new Set(["new", "working", "follow_up", "appointment", "qualified", "not_interested", "closed"]);
+const PRIORITIES = new Set(["low", "normal", "high"]);
 
 function leadRateLimit(req, res, next) {
   const key = String(req.ip || req.socket?.remoteAddress || "unknown");
@@ -37,6 +40,13 @@ function salesAuth(req, res, next) {
   next();
 }
 
+function parseNextAction(value) {
+  if (value === null || value === "") return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) throw new Error("Invalid next-action date/time");
+  return d.toISOString();
+}
+
 export function attachMarketing(app) {
   app.use("/assets", express.static(PUBLIC_DIR, { maxAge: "1h", index: false }));
   app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
@@ -44,9 +54,10 @@ export function attachMarketing(app) {
   app.get("/mobile", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "mobile.html")));
   app.get("/sales", salesAuth, (_req, res) => {
     res.set("X-Robots-Tag", "noindex, nofollow");
-    const salesHtml = fs.readFileSync(path.join(PUBLIC_DIR, "sales.html"), "utf8");
-    const linkedHtml = salesHtml.replace('<nav class="navlinks">', '<nav class="navlinks"><a href="/playbook">Employee Playbook</a>');
-    res.type("html").send(linkedHtml);
+    const preferred = path.join(PUBLIC_DIR, "sales-v2.html");
+    const fallback = path.join(PUBLIC_DIR, "sales.html");
+    const file = fs.existsSync(preferred) ? preferred : fallback;
+    res.sendFile(file);
   });
   app.get("/playbook", salesAuth, (_req, res) => {
     res.set("X-Robots-Tag", "noindex, nofollow");
@@ -88,10 +99,73 @@ export function attachMarketing(app) {
 
   app.get("/api/sales/leads", salesAuth, async (_req, res, next) => {
     try {
-      const result = await query(`SELECT id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,created_at
-        FROM leads ORDER BY created_at DESC LIMIT 100`);
+      const result = await query(`SELECT id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,suppression_reason,created_at,updated_at
+        FROM leads
+        ORDER BY do_not_call ASC,
+          CASE WHEN next_action_at IS NOT NULL AND next_action_at <= now() THEN 0 ELSE 1 END,
+          CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+          COALESCE(next_action_at, created_at) ASC
+        LIMIT 150`);
       res.json({ ok: true, leads: result.rows });
     } catch (error) { next(error); }
+  });
+
+  app.get("/api/sales/metrics", salesAuth, async (_req, res, next) => {
+    try {
+      const result = await query(`SELECT
+        count(*) FILTER (WHERE status='new' AND do_not_call=false) AS new_count,
+        count(*) FILTER (WHERE status='working' AND do_not_call=false) AS working_count,
+        count(*) FILTER (WHERE status='follow_up' AND do_not_call=false) AS follow_up_count,
+        count(*) FILTER (WHERE status='appointment' AND do_not_call=false) AS appointment_count,
+        count(*) FILTER (WHERE status='qualified' AND do_not_call=false) AS qualified_count,
+        count(*) FILTER (WHERE status='closed') AS closed_count,
+        count(*) FILTER (WHERE next_action_at IS NOT NULL AND next_action_at <= now() AND do_not_call=false AND status NOT IN ('closed','not_interested')) AS due_now,
+        count(*) FILTER (WHERE (created_at AT TIME ZONE 'America/Phoenix')::date = (now() AT TIME ZONE 'America/Phoenix')::date) AS added_today
+        FROM leads`);
+      res.json({ ok: true, metrics: result.rows[0] });
+    } catch (error) { next(error); }
+  });
+
+  app.patch("/api/sales/leads/:id", salesAuth, async (req, res, next) => {
+    try {
+      const id = String(req.params.id || "");
+      if (!UUID_RE.test(id)) return res.status(400).json({ ok: false, error: "Invalid lead id" });
+      const body = req.body || {};
+      const sets = [];
+      const values = [];
+      const add = (sql, value) => { values.push(value); sets.push(sql.replace("?", `$${values.length}`)); };
+
+      if (body.status !== undefined) {
+        const status = clean(body.status, 40);
+        if (!LEAD_STATUSES.has(status)) return res.status(400).json({ ok: false, error: "Invalid lead status" });
+        add("status=?", status);
+      }
+      if (body.priority !== undefined) {
+        const priority = clean(body.priority, 20);
+        if (!PRIORITIES.has(priority)) return res.status(400).json({ ok: false, error: "Invalid priority" });
+        add("priority=?", priority);
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "nextActionAt")) add("next_action_at=?", parseNextAction(body.nextActionAt));
+      if (body.markContacted === true) sets.push("last_contact_at=now()");
+      const append = clean(body.notesAppend, 2000);
+      if (append) add("notes=concat_ws(E'\\n',NULLIF(notes,''),?)", append);
+      if (body.doNotCall === true) {
+        sets.push("do_not_call=true");
+        sets.push("status='not_interested'");
+        sets.push("next_action_at=NULL");
+        add("suppression_reason=?", clean(body.suppressionReason, 250) || "Manual opt-out recorded by sales desk");
+      }
+      if (!sets.length) return res.status(400).json({ ok: false, error: "No lead changes supplied" });
+      sets.push("updated_at=now()");
+      values.push(id);
+      const result = await query(`UPDATE leads SET ${sets.join(",")} WHERE id=$${values.length}
+        RETURNING id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,suppression_reason,created_at,updated_at`, values);
+      if (!result.rowCount) return res.status(404).json({ ok: false, error: "Lead not found" });
+      res.json({ ok: true, lead: result.rows[0] });
+    } catch (error) {
+      if (/Invalid next-action/i.test(error.message || "")) return res.status(400).json({ ok: false, error: error.message });
+      next(error);
+    }
   });
 
   app.get("/api/admin/marketing/leads", async (req, res, next) => {
@@ -100,7 +174,7 @@ export function attachMarketing(app) {
       const supplied = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
       if (!configured) return res.status(503).json({ ok: false, error: "Admin API key is not configured" });
       if (supplied !== configured) return res.status(401).json({ ok: false, error: "Unauthorized" });
-      const result = await query(`SELECT id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,created_at
+      const result = await query(`SELECT id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,created_at,updated_at
         FROM leads ORDER BY created_at DESC LIMIT 250`);
       res.json({ ok: true, leads: result.rows });
     } catch (error) { next(error); }
