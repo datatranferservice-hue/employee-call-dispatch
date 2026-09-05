@@ -1,4 +1,5 @@
 import express from "express";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { query } from "./db.js";
@@ -43,7 +44,9 @@ export function attachMarketing(app) {
   app.get("/mobile", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "mobile.html")));
   app.get("/sales", salesAuth, (_req, res) => {
     res.set("X-Robots-Tag", "noindex, nofollow");
-    res.sendFile(path.join(PUBLIC_DIR, "sales.html"));
+    const salesHtml = fs.readFileSync(path.join(PUBLIC_DIR, "sales.html"), "utf8");
+    const linkedHtml = salesHtml.replace('<nav class="navlinks">', '<nav class="navlinks"><a href="/playbook">Employee Playbook</a>');
+    res.type("html").send(linkedHtml);
   });
   app.get("/playbook", salesAuth, (_req, res) => {
     res.set("X-Robots-Tag", "noindex, nofollow");
