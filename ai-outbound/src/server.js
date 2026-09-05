@@ -5,6 +5,7 @@ import { asteriskConfigured } from "./transport.js";
 import { snapshot, campaignList, dispatchCampaign, sessionContext, markAnswered, finishSession, bookAppointment, cleanupStaleDialingSessions } from "./engine.js";
 import { attachRealtimeSideband, sidebandStatus } from "./sideband.js";
 import { verifiedOpenAIEvent, webhookVerificationMode } from "./webhook.js";
+import { attachMarketing } from "./marketing.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -26,6 +27,8 @@ app.use((_req, res, next) => {
   next();
 });
 
+attachMarketing(app);
+
 const jsonError = (res, status, error) => res.status(status).json({ ok: false, error });
 const liveEnabled = () => String(process.env.ALLOW_LIVE_AI_CALLS || "false").toLowerCase() === "true";
 const adminAuth = (req, res, next) => {
@@ -41,10 +44,10 @@ const asteriskAuth = (req, res, next) => {
   next();
 };
 
-app.get("/", (_req, res) => res.json({
+app.get("/api", (_req, res) => res.json({
   ok: true,
   service: "Sentinel Zero AI Outbound Caller",
-  version: "1.2.0",
+  version: "1.3.0",
   liveDialingEnabled: liveEnabled()
 }));
 
@@ -63,7 +66,7 @@ app.get("/health", async (_req, res, next) => {
     res.json({
       ok: true,
       service: "Sentinel Zero AI Outbound Caller",
-      version: "1.2.0",
+      version: "1.3.0",
       databaseTime: db.database_time,
       components,
       liveReady: components.ai && components.asterisk && components.liveDialing && webhookMode !== "unconfigured",
