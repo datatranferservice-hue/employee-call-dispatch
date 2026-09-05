@@ -21,12 +21,27 @@ function leadRateLimit(req, res, next) {
   next();
 }
 
+function salesAuth(req, res, next) {
+  const password = String(process.env.SALES_DESK_PASSWORD || "");
+  if (!password) return res.status(503).send("Sales desk access is not configured.");
+  const authorization = String(req.headers.authorization || "");
+  const encoded = authorization.startsWith("Basic ") ? authorization.slice(6) : "";
+  let supplied = "";
+  try { supplied = Buffer.from(encoded, "base64").toString("utf8"); } catch {}
+  const [username, ...parts] = supplied.split(":");
+  if (username !== "sentinel" || parts.join(":") !== password) {
+    res.set("WWW-Authenticate", 'Basic realm="Sentinel Zero Sales Desk"');
+    return res.status(401).send("Authorized Sentinel Zero callers only.");
+  }
+  next();
+}
+
 export function attachMarketing(app) {
   app.use("/assets", express.static(PUBLIC_DIR, { maxAge: "1h", index: false }));
   app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
   app.get("/business", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "business.html")));
   app.get("/mobile", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "mobile.html")));
-  app.get("/sales", (_req, res) => {
+  app.get("/sales", salesAuth, (_req, res) => {
     res.set("X-Robots-Tag", "noindex, nofollow");
     res.sendFile(path.join(PUBLIC_DIR, "sales.html"));
   });
@@ -61,6 +76,14 @@ export function attachMarketing(app) {
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,created_at`,
         [org.rows[0].id, companyName, contactName, phone, email, source, notes]);
       res.status(201).json({ ok: true, leadId: result.rows[0].id, createdAt: result.rows[0].created_at });
+    } catch (error) { next(error); }
+  });
+
+  app.get("/api/sales/leads", salesAuth, async (_req, res, next) => {
+    try {
+      const result = await query(`SELECT id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,created_at
+        FROM leads ORDER BY created_at DESC LIMIT 100`);
+      res.json({ ok: true, leads: result.rows });
     } catch (error) { next(error); }
   });
 
