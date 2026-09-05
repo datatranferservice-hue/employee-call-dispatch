@@ -10,6 +10,7 @@ const clean = (value, max = 500) => String(value || "").trim().slice(0, max);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LEAD_STATUSES = new Set(["new", "working", "follow_up", "appointment", "qualified", "not_interested", "closed"]);
 const PRIORITIES = new Set(["low", "normal", "high"]);
+const SALES_ACTIVITIES = new Set(["dial", "connect", "decision_maker"]);
 
 function leadRateLimit(req, res, next) {
   const key = String(req.ip || req.socket?.remoteAddress || "unknown");
@@ -49,6 +50,18 @@ function parseDate(value, label = "date/time") {
 function parseNextAction(value) {
   if (value === null || value === "") return null;
   return parseDate(value, "next-action date/time");
+}
+
+async function logSalesActivity(req, { organizationId, leadId = null, action, caller, metadata = {} }) {
+  await query(`INSERT INTO audit_events(organization_id,action,entity_type,entity_id,metadata,ip_address,user_agent)
+    VALUES($1,$2,'lead',$3,$4::jsonb,$5,$6)`, [
+    organizationId,
+    `sales.${action}`,
+    leadId,
+    JSON.stringify({ caller: clean(caller, 120) || "Unassigned", ...metadata }),
+    clean(req.ip || req.socket?.remoteAddress, 100) || null,
+    clean(req.headers["user-agent"], 500) || null
+  ]);
 }
 
 export function attachMarketing(app) {
@@ -132,6 +145,26 @@ export function attachMarketing(app) {
     } catch (error) { next(error); }
   });
 
+  app.post("/api/sales/activity", salesAuth, async (req, res, next) => {
+    try {
+      const leadId = String(req.body?.leadId || "");
+      const action = clean(req.body?.activityType, 40);
+      const caller = clean(req.body?.caller, 120);
+      const outcome = clean(req.body?.outcome, 300);
+      if (!UUID_RE.test(leadId)) return res.status(400).json({ ok: false, error: "Invalid lead id" });
+      if (!SALES_ACTIVITIES.has(action)) return res.status(400).json({ ok: false, error: "Invalid activity type" });
+      if (!caller) return res.status(400).json({ ok: false, error: "Caller name is required" });
+      const lead = await query("SELECT id,organization_id,do_not_call,status FROM leads WHERE id=$1", [leadId]);
+      if (!lead.rowCount) return res.status(404).json({ ok: false, error: "Lead not found" });
+      if (lead.rows[0].do_not_call) return res.status(409).json({ ok: false, error: "This prospect is marked Do Not Call" });
+      await logSalesActivity(req, { organizationId: lead.rows[0].organization_id, leadId, action, caller, metadata: { outcome } });
+      if (action === "connect" || action === "decision_maker") {
+        await query(`UPDATE leads SET last_contact_at=now(),status=CASE WHEN status='new' THEN 'working' ELSE status END,updated_at=now() WHERE id=$1`, [leadId]);
+      }
+      res.status(201).json({ ok: true, activityType: action });
+    } catch (error) { next(error); }
+  });
+
   app.patch("/api/sales/leads/:id", salesAuth, async (req, res, next) => {
     try {
       const id = String(req.params.id || "");
@@ -164,8 +197,15 @@ export function attachMarketing(app) {
       sets.push("updated_at=now()");
       values.push(id);
       const result = await query(`UPDATE leads SET ${sets.join(",")} WHERE id=$${values.length}
-        RETURNING id,company_name,contact_name,phone,email,segment,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,suppression_reason,created_at,updated_at`, values);
+        RETURNING id,organization_id,company_name,contact_name,phone,email,segment,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,suppression_reason,created_at,updated_at`, values);
       if (!result.rowCount) return res.status(404).json({ ok: false, error: "Lead not found" });
+      const caller = clean(body.caller, 120) || "Unassigned";
+      if (Object.prototype.hasOwnProperty.call(body, "nextActionAt") && body.nextActionAt) {
+        await logSalesActivity(req, { organizationId: result.rows[0].organization_id, leadId: id, action: "follow_up_set", caller, metadata: { nextActionAt: result.rows[0].next_action_at } });
+      }
+      if (body.doNotCall === true) {
+        await logSalesActivity(req, { organizationId: result.rows[0].organization_id, leadId: id, action: "dnc", caller, metadata: { reason: result.rows[0].suppression_reason } });
+      }
       res.json({ ok: true, lead: result.rows[0] });
     } catch (error) {
       if (/Invalid .*date\/time/i.test(error.message || "")) return res.status(400).json({ ok: false, error: error.message });
@@ -187,7 +227,7 @@ export function attachMarketing(app) {
         ), booked AS (
           INSERT INTO appointments(organization_id,lead_id,scheduled_at,status,meeting_type,notes,source)
           SELECT organization_id,id,$2,'scheduled',$3,$4,'human_sales_desk' FROM target
-          RETURNING id,lead_id,scheduled_at,status,meeting_type,notes,source
+          RETURNING id,organization_id,lead_id,scheduled_at,status,meeting_type,notes,source
         ), moved AS (
           UPDATE leads SET status='appointment',priority='high',next_action_at=$2,last_contact_at=now(),
             notes=concat_ws(E'\\n',NULLIF(notes,''),$5),updated_at=now()
@@ -197,6 +237,13 @@ export function attachMarketing(app) {
         SELECT b.* FROM booked b JOIN moved m ON m.id=b.lead_id`,
         [leadId, scheduledAt, meetingType, note || `Appointment booked by ${caller}`, `[${caller}] Appointment booked for ${scheduledAt}: ${meetingType}${note ? ` — ${note}` : ""}`]);
       if (!result.rowCount) return res.status(404).json({ ok: false, error: "Lead not found or is suppressed" });
+      await logSalesActivity(req, {
+        organizationId: result.rows[0].organization_id,
+        leadId,
+        action: "appointment_booked",
+        caller,
+        metadata: { appointmentId: result.rows[0].id, scheduledAt: result.rows[0].scheduled_at, meetingType }
+      });
       res.status(201).json({ ok: true, appointment: result.rows[0] });
     } catch (error) {
       if (/Invalid appointment|must be in the future/i.test(error.message || "")) return res.status(400).json({ ok: false, error: error.message });
@@ -217,7 +264,7 @@ export function attachMarketing(app) {
 
   app.get("/api/sales/manager", salesAuth, async (_req, res, next) => {
     try {
-      const [funnel, segments, sources, appointments, due] = await Promise.all([
+      const [funnel, segments, sources, appointments, due, callers] = await Promise.all([
         query(`SELECT status,count(*)::int AS count FROM leads GROUP BY status ORDER BY status`),
         query(`SELECT COALESCE(segment,'unclassified') AS segment,count(*)::int AS count,
           count(*) FILTER(WHERE status IN ('appointment','qualified','closed'))::int AS advanced
@@ -231,9 +278,20 @@ export function attachMarketing(app) {
           ORDER BY a.scheduled_at ASC LIMIT 50`),
         query(`SELECT id,company_name,contact_name,phone,email,segment,status,priority,next_action_at
           FROM leads WHERE do_not_call=false AND status NOT IN ('closed','not_interested') AND next_action_at IS NOT NULL
-          ORDER BY CASE WHEN next_action_at<=now() THEN 0 ELSE 1 END,next_action_at ASC LIMIT 50`)
+          ORDER BY CASE WHEN next_action_at<=now() THEN 0 ELSE 1 END,next_action_at ASC LIMIT 50`),
+        query(`SELECT COALESCE(NULLIF(metadata->>'caller',''),'Unassigned') AS caller,
+          count(*) FILTER(WHERE action='sales.dial')::int AS dials,
+          count(*) FILTER(WHERE action='sales.connect')::int AS connects,
+          count(*) FILTER(WHERE action='sales.decision_maker')::int AS decision_makers,
+          count(*) FILTER(WHERE action='sales.appointment_booked')::int AS appointments,
+          count(*) FILTER(WHERE action='sales.follow_up_set')::int AS follow_ups,
+          count(*) FILTER(WHERE action='sales.dnc')::int AS dnc
+          FROM audit_events
+          WHERE action LIKE 'sales.%' AND created_at >= now() - interval '30 days'
+          GROUP BY COALESCE(NULLIF(metadata->>'caller',''),'Unassigned')
+          ORDER BY appointments DESC,decision_makers DESC,connects DESC,dials DESC`)
       ]);
-      res.json({ ok: true, funnel: funnel.rows, segments: segments.rows, sources: sources.rows, appointments: appointments.rows, due: due.rows });
+      res.json({ ok: true, funnel: funnel.rows, segments: segments.rows, sources: sources.rows, appointments: appointments.rows, due: due.rows, callers: callers.rows });
     } catch (error) { next(error); }
   });
 
