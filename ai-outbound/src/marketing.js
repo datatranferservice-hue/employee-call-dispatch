@@ -40,11 +40,15 @@ function salesAuth(req, res, next) {
   next();
 }
 
+function parseDate(value, label = "date/time") {
+  const d = new Date(value);
+  if (!value || Number.isNaN(d.getTime())) throw new Error(`Invalid ${label}`);
+  return d.toISOString();
+}
+
 function parseNextAction(value) {
   if (value === null || value === "") return null;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) throw new Error("Invalid next-action date/time");
-  return d.toISOString();
+  return parseDate(value, "next-action date/time");
 }
 
 export function attachMarketing(app) {
@@ -54,14 +58,16 @@ export function attachMarketing(app) {
   app.get("/mobile", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "mobile.html")));
   app.get("/sales", salesAuth, (_req, res) => {
     res.set("X-Robots-Tag", "noindex, nofollow");
-    const preferred = path.join(PUBLIC_DIR, "sales-v2.html");
-    const fallback = path.join(PUBLIC_DIR, "sales.html");
-    const file = fs.existsSync(preferred) ? preferred : fallback;
-    res.sendFile(file);
+    const files = ["sales-v3.html", "sales-v2.html", "sales.html"].map(name => path.join(PUBLIC_DIR, name));
+    res.sendFile(files.find(file => fs.existsSync(file)) || files[files.length - 1]);
   });
   app.get("/playbook", salesAuth, (_req, res) => {
     res.set("X-Robots-Tag", "noindex, nofollow");
     res.sendFile(path.join(PUBLIC_DIR, "playbook.html"));
+  });
+  app.get("/manager", salesAuth, (_req, res) => {
+    res.set("X-Robots-Tag", "noindex, nofollow");
+    res.sendFile(path.join(PUBLIC_DIR, "manager.html"));
   });
 
   app.post("/api/public/leads", leadRateLimit, async (req, res, next) => {
@@ -99,13 +105,13 @@ export function attachMarketing(app) {
 
   app.get("/api/sales/leads", salesAuth, async (_req, res, next) => {
     try {
-      const result = await query(`SELECT id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,suppression_reason,created_at,updated_at
+      const result = await query(`SELECT id,company_name,contact_name,phone,email,segment,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,suppression_reason,created_at,updated_at
         FROM leads
         ORDER BY do_not_call ASC,
           CASE WHEN next_action_at IS NOT NULL AND next_action_at <= now() THEN 0 ELSE 1 END,
           CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
           COALESCE(next_action_at, created_at) ASC
-        LIMIT 150`);
+        LIMIT 200`);
       res.json({ ok: true, leads: result.rows });
     } catch (error) { next(error); }
   });
@@ -134,7 +140,6 @@ export function attachMarketing(app) {
       const sets = [];
       const values = [];
       const add = (sql, value) => { values.push(value); sets.push(sql.replace("?", `$${values.length}`)); };
-
       if (body.status !== undefined) {
         const status = clean(body.status, 40);
         if (!LEAD_STATUSES.has(status)) return res.status(400).json({ ok: false, error: "Invalid lead status" });
@@ -159,13 +164,77 @@ export function attachMarketing(app) {
       sets.push("updated_at=now()");
       values.push(id);
       const result = await query(`UPDATE leads SET ${sets.join(",")} WHERE id=$${values.length}
-        RETURNING id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,suppression_reason,created_at,updated_at`, values);
+        RETURNING id,company_name,contact_name,phone,email,segment,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,suppression_reason,created_at,updated_at`, values);
       if (!result.rowCount) return res.status(404).json({ ok: false, error: "Lead not found" });
       res.json({ ok: true, lead: result.rows[0] });
     } catch (error) {
-      if (/Invalid next-action/i.test(error.message || "")) return res.status(400).json({ ok: false, error: error.message });
+      if (/Invalid .*date\/time/i.test(error.message || "")) return res.status(400).json({ ok: false, error: error.message });
       next(error);
     }
+  });
+
+  app.post("/api/sales/leads/:id/appointment", salesAuth, async (req, res, next) => {
+    try {
+      const leadId = String(req.params.id || "");
+      if (!UUID_RE.test(leadId)) return res.status(400).json({ ok: false, error: "Invalid lead id" });
+      const scheduledAt = parseDate(req.body?.scheduledAt, "appointment date/time");
+      if (new Date(scheduledAt).getTime() < Date.now() - 5 * 60 * 1000) return res.status(400).json({ ok: false, error: "Appointment must be in the future" });
+      const meetingType = clean(req.body?.meetingType, 120) || "15-minute Sentinel Zero fit call";
+      const caller = clean(req.body?.caller, 120) || "Sales Desk";
+      const note = clean(req.body?.notes, 1500);
+      const result = await query(`WITH target AS (
+          SELECT id,organization_id FROM leads WHERE id=$1 AND do_not_call=false
+        ), booked AS (
+          INSERT INTO appointments(organization_id,lead_id,scheduled_at,status,meeting_type,notes,source)
+          SELECT organization_id,id,$2,'scheduled',$3,$4,'human_sales_desk' FROM target
+          RETURNING id,lead_id,scheduled_at,status,meeting_type,notes,source
+        ), moved AS (
+          UPDATE leads SET status='appointment',priority='high',next_action_at=$2,last_contact_at=now(),
+            notes=concat_ws(E'\\n',NULLIF(notes,''),$5),updated_at=now()
+          WHERE id=$1 AND EXISTS(SELECT 1 FROM booked)
+          RETURNING id
+        )
+        SELECT b.* FROM booked b JOIN moved m ON m.id=b.lead_id`,
+        [leadId, scheduledAt, meetingType, note || `Appointment booked by ${caller}`, `[${caller}] Appointment booked for ${scheduledAt}: ${meetingType}${note ? ` — ${note}` : ""}`]);
+      if (!result.rowCount) return res.status(404).json({ ok: false, error: "Lead not found or is suppressed" });
+      res.status(201).json({ ok: true, appointment: result.rows[0] });
+    } catch (error) {
+      if (/Invalid appointment|must be in the future/i.test(error.message || "")) return res.status(400).json({ ok: false, error: error.message });
+      next(error);
+    }
+  });
+
+  app.get("/api/sales/appointments", salesAuth, async (_req, res, next) => {
+    try {
+      const result = await query(`SELECT a.id,a.lead_id,a.scheduled_at,a.status,a.meeting_type,a.notes,a.source,
+          l.company_name,l.contact_name,l.phone,l.email,l.segment
+        FROM appointments a LEFT JOIN leads l ON l.id=a.lead_id
+        WHERE a.status='scheduled' AND a.scheduled_at >= now() - interval '1 day'
+        ORDER BY a.scheduled_at ASC LIMIT 100`);
+      res.json({ ok: true, appointments: result.rows });
+    } catch (error) { next(error); }
+  });
+
+  app.get("/api/sales/manager", salesAuth, async (_req, res, next) => {
+    try {
+      const [funnel, segments, sources, appointments, due] = await Promise.all([
+        query(`SELECT status,count(*)::int AS count FROM leads GROUP BY status ORDER BY status`),
+        query(`SELECT COALESCE(segment,'unclassified') AS segment,count(*)::int AS count,
+          count(*) FILTER(WHERE status IN ('appointment','qualified','closed'))::int AS advanced
+          FROM leads WHERE do_not_call=false GROUP BY COALESCE(segment,'unclassified') ORDER BY count DESC`),
+        query(`SELECT COALESCE(source,'unknown') AS source,count(*)::int AS count,
+          count(*) FILTER(WHERE status IN ('appointment','qualified','closed'))::int AS advanced
+          FROM leads GROUP BY COALESCE(source,'unknown') ORDER BY count DESC LIMIT 20`),
+        query(`SELECT a.id,a.scheduled_at,a.status,a.meeting_type,l.company_name,l.contact_name,l.phone,l.email
+          FROM appointments a LEFT JOIN leads l ON l.id=a.lead_id
+          WHERE a.status='scheduled' AND a.scheduled_at >= now() - interval '1 day'
+          ORDER BY a.scheduled_at ASC LIMIT 50`),
+        query(`SELECT id,company_name,contact_name,phone,email,segment,status,priority,next_action_at
+          FROM leads WHERE do_not_call=false AND status NOT IN ('closed','not_interested') AND next_action_at IS NOT NULL
+          ORDER BY CASE WHEN next_action_at<=now() THEN 0 ELSE 1 END,next_action_at ASC LIMIT 50`)
+      ]);
+      res.json({ ok: true, funnel: funnel.rows, segments: segments.rows, sources: sources.rows, appointments: appointments.rows, due: due.rows });
+    } catch (error) { next(error); }
   });
 
   app.get("/api/admin/marketing/leads", async (req, res, next) => {
@@ -174,7 +243,7 @@ export function attachMarketing(app) {
       const supplied = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
       if (!configured) return res.status(503).json({ ok: false, error: "Admin API key is not configured" });
       if (supplied !== configured) return res.status(401).json({ ok: false, error: "Unauthorized" });
-      const result = await query(`SELECT id,company_name,contact_name,phone,email,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,created_at,updated_at
+      const result = await query(`SELECT id,company_name,contact_name,phone,email,segment,source,status,priority,notes,last_contact_at,next_action_at,do_not_call,created_at,updated_at
         FROM leads ORDER BY created_at DESC LIMIT 250`);
       res.json({ ok: true, leads: result.rows });
     } catch (error) { next(error); }
