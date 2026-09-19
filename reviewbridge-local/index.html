@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ReviewBridge Local</title>
+<meta name="description" content="ReviewBridge Local gives local businesses a professional review-request page, private feedback option, QR-ready customer link, and follow-up scripts.">
+<style>
+:root{--bg:#071019;--panel:#0d1d29;--line:#23485b;--ink:#eef7fb;--muted:#a5bbc6;--ice:#7fe0ff;--orange:#d85d3b;--blue:#2697b5}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at top,#0d2432 0,#071019 45%);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+a{text-decoration:none}.wrap{max-width:1120px;margin:auto;padding:0 20px}.top{position:sticky;top:0;z-index:10;background:#071019e8;backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topin{height:68px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{font-weight:950;letter-spacing:.11em;font-size:14px}.nav{display:flex;gap:18px}.nav a{color:#b9d8e6;font-size:14px}
+.hero{padding:78px 0 54px}.eyebrow{color:var(--ice);font-size:12px;text-transform:uppercase;letter-spacing:.16em;font-weight:900}.hero h1{font-size:clamp(42px,7vw,78px);line-height:.96;margin:12px 0 18px;max-width:980px}
+.hero p{font-size:20px;line-height:1.6;color:var(--muted);max-width:780px}.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}.btn{display:inline-flex;align-items:center;justify-content:center;border:none;cursor:pointer;padding:14px 18px;border-radius:12px;font-weight:900;color:#fff;background:linear-gradient(135deg,var(--orange),var(--blue));font-size:15px}.btn.alt{background:#102735;border:1px solid #315f73}.badge{display:inline-block;border:1px solid #2f647a;background:#0f3343;color:#87e8ff;border-radius:999px;padding:7px 10px;font-size:11px;font-weight:900;margin-top:20px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card{background:linear-gradient(180deg,#0d202d,#0a1822);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 12px 36px #00000024}.card h3{margin-top:0}.card p,.card li{color:var(--muted);line-height:1.55}.section{padding:34px 0}.section h2{font-size:clamp(28px,4vw,44px);margin:0 0 18px}.price{font-size:48px;font-weight:950}.small{font-size:12px;color:#7f99a5}.check{padding-left:18px}.check li{margin:9px 0}
+.builder{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}.form{background:#0c1e2a;border:1px solid var(--line);border-radius:18px;padding:20px}label{display:block;font-size:12px;font-weight:900;color:#bfe8f8;margin:14px 0 7px}.input{width:100%;background:#07131c;color:#fff;border:1px solid #31586b;border-radius:11px;padding:13px;font:inherit}.out{word-break:break-all;background:#07131c;border:1px dashed #31586b;padding:12px;border-radius:10px;color:#aee8ff;font-size:12px}.reviewcard{text-align:center;background:#fff;color:#12222b;border-radius:22px;padding:28px}.reviewcard p{color:#50626b}.reviewcard .biz{font-size:30px;font-weight:950;margin-bottom:8px}.reviewactions{display:grid;gap:10px;margin-top:22px}.reviewactions a{padding:14px;border-radius:11px;font-weight:900}.reviewactions .primary{background:#153e4d;color:#fff}.reviewactions .secondary{background:#edf4f7;color:#16323f;border:1px solid #cbdce4}.qr{display:block;margin:16px auto 0;border-radius:12px;max-width:180px}
+.notice{background:#0b2734;border-left:4px solid var(--ice);padding:14px 16px;border-radius:10px;color:#b9d9e7}.footer{border-top:1px solid var(--line);padding:30px 0 50px;margin-top:46px;color:#8198a4;font-size:12px}
+@media(max-width:800px){.grid,.builder{grid-template-columns:1fr}.nav{display:none}.hero{padding-top:54px}.topin{height:60px}.reviewcard .biz{font-size:26px}}
+</style>
+</head>
+<body>
+<div class="top"><div class="wrap topin"><div class="brand">REVIEWBRIDGE LOCAL</div><div class="nav"><a href="#offer">Offer</a><a href="#builder">Demo Builder</a><a href="#sales">Sales Kit</a></div></div></div>
+<main class="wrap">
+<section class="hero">
+<div class="eyebrow">Standalone revenue build</div>
+<h1>Help local businesses ask for reviews professionally — without review gating.</h1>
+<p>ReviewBridge Local is a productized setup service: a branded customer review-request page, private feedback option, QR-ready share link, and ready-to-send follow-up messages. One setup can be sold repeatedly to local businesses.</p>
+<div class="cta"><a class="btn" href="#builder">Build a live sample</a><a class="btn alt" href="mailto:cezarmorris2021@gmail.com?subject=ReviewBridge%20Local%20Setup%20Request">Request setup / invoice</a></div>
+<div class="badge">Designed for same-day selling • mobile-first • no login required</div>
+</section>
+
+<section id="offer" class="section">
+<h2>The offer</h2>
+<div class="grid">
+<div class="card"><div class="small">LAUNCH PACKAGE</div><div class="price">$249</div><p>One-time client setup.</p><ul class="check"><li>Branded review-request page</li><li>Google review button</li><li>Private feedback button</li><li>QR-ready share link</li><li>SMS + email follow-up scripts</li><li>Mobile launch setup</li></ul></div>
+<div class="card"><div class="small">OPTIONAL CARE</div><div class="price">$39<span style="font-size:18px">/mo</span></div><p>Ongoing hosting, link changes, copy updates, QR refreshes, and support.</p><ul class="check"><li>Monthly changes</li><li>Updated review destination</li><li>Support and replacement assets</li></ul></div>
+<div class="card"><h3>Easy prospect profile</h3><p>Restaurants, cleaners, contractors, salons, barbers, detailers, landscapers, repair companies, mobile services, and other local businesses that already depend on word-of-mouth.</p><p class="small">Positioning: reputation workflow setup, not fake reviews, incentives, or selective review gating.</p></div>
+</div>
+</section>
+
+<section id="builder" class="section">
+<h2>Instant client sample builder</h2>
+<div class="builder">
+<div class="form">
+<label>Business name</label><input id="biz" class="input" value="Desert Star Home Services">
+<label>Google review URL</label><input id="review" class="input" placeholder="Paste the client's Google review link">
+<label>Private feedback email</label><input id="email" class="input" value="owner@example.com">
+<div class="cta"><button class="btn" onclick="build()">Generate sample</button><button class="btn alt" onclick="copyLink()">Copy customer link</button></div>
+<label>Generated customer link</label><div class="out" id="linkout">Generate a sample to create the link.</div>
+<p class="small">The review and private-feedback options are both visible. This avoids selectively routing only happy customers to public reviews.</p>
+</div>
+<div id="preview" class="reviewcard">
+<div class="small" style="color:#69808a">CUSTOMER REVIEW PAGE</div>
+<div class="biz">Desert Star Home Services</div>
+<p>Thanks for choosing us. Your feedback helps our team improve and helps future customers understand what to expect.</p>
+<div class="reviewactions"><a class="primary" href="#" onclick="return false">Leave a Google review</a><a class="secondary" href="mailto:owner@example.com">Send private feedback</a></div>
+</div>
+</div>
+</section>
+
+<section class="section">
+<h2>What the client receives</h2>
+<div class="grid">
+<div class="card"><h3>1. Customer page</h3><p>A simple mobile page clients can send after a completed job, visit, appointment, or purchase.</p></div>
+<div class="card"><h3>2. Share system</h3><p>A single link that can be texted, emailed, placed behind a QR code, printed on receipts, or added to follow-up messages.</p></div>
+<div class="card"><h3>3. Follow-up copy</h3><p>Short request scripts that staff can reuse without rewriting the message every time.</p></div>
+</div>
+</section>
+
+<section id="sales" class="section">
+<h2>Ready-to-use selling system</h2>
+<div class="grid">
+<div class="card"><h3>Call opener</h3><p>“Hi, we set up a simple branded review-request system for local businesses. It gives your customers one clean link for a Google review or private feedback, plus a QR-ready page your staff can reuse. Are you currently asking customers for reviews consistently?”</p></div>
+<div class="card"><h3>Close</h3><p>“The complete setup is $249 one time. I can build the branded page, connect your review link, prepare the follow-up messages, and give you the customer link. If you want ongoing changes and support, that’s $39 a month.”</p></div>
+<div class="card"><h3>Fast fulfillment</h3><p>Collect business name, logo if available, Google review URL, feedback email, and brand preference. The client page can be configured and delivered the same day.</p></div>
+</div>
+</section>
+
+<section class="section"><div class="notice"><strong>Revenue path:</strong> sell the $249 setup directly by phone, email, or in person. The “Request setup / invoice” button creates the order handoff immediately. When live Stripe access is repaired, the payment button can be swapped to live checkout without rebuilding the offer.</div></section>
+
+<footer class="footer">ReviewBridge Local • independent standalone build • © 2026. No promises of review volume or ratings. Clients are responsible for following the review platform policies that apply to them.</footer>
+</main>
+<script>
+function enc(s){return encodeURIComponent((s||'').trim())}
+function clean(s){return (s||'').replace(/[<>]/g,'')}
+function build(){
+ const b=document.getElementById('biz').value.trim()||'Your Business';
+ const r=document.getElementById('review').value.trim();
+ const e=document.getElementById('email').value.trim()||'owner@example.com';
+ const base=location.origin+location.pathname;
+ const u=base+'?customer=1&biz='+enc(b)+'&review='+enc(r)+'&email='+enc(e);
+ document.getElementById('linkout').textContent=u;
+ document.getElementById('preview').innerHTML='<div class="small" style="color:#69808a">CUSTOMER REVIEW PAGE</div><div class="biz">'+clean(b)+'</div><p>Thanks for choosing us. Your feedback helps our team improve and helps future customers understand what to expect.</p><div class="reviewactions">'+(r?'<a class="primary" href="'+r+'" target="_blank" rel="noopener">Leave a Google review</a>':'<a class="primary" href="#" onclick="return false">Leave a Google review</a>')+'<a class="secondary" href="mailto:'+e+'?subject='+enc(b+' feedback')+'">Send private feedback</a></div><img class="qr" alt="QR code" src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data='+enc(u)+'"><p class="small">Scan to reopen this review page.</p>';
+}
+async function copyLink(){
+ if(!document.getElementById('linkout').textContent.startsWith('http')) build();
+ const v=document.getElementById('linkout').textContent;
+ try{await navigator.clipboard.writeText(v);alert('Customer link copied.')}catch(e){prompt('Copy this link:',v)}
+}
+(function(){
+ const p=new URLSearchParams(location.search);
+ if(p.get('customer')==='1'){
+  const b=p.get('biz')||'Local Business',r=p.get('review')||'',e=p.get('email')||'';
+  document.body.innerHTML='<main class="wrap" style="max-width:660px;padding-top:55px"><div class="reviewcard"><div class="small" style="color:#69808a">CUSTOMER FEEDBACK</div><div class="biz">'+clean(b)+'</div><p>Thanks for choosing us. Your feedback helps our team improve and helps future customers understand what to expect.</p><div class="reviewactions">'+(r?'<a class="primary" href="'+r+'" target="_blank" rel="noopener">Leave a Google review</a>':'<a class="primary" href="#" onclick="return false">Google review link</a>')+'<a class="secondary" href="mailto:'+e+'?subject='+enc(b+' feedback')+'">Send private feedback</a></div></div><p class="small" style="text-align:center;margin-top:18px">Powered by ReviewBridge Local</p></main>';
+ }
+})();
+</script>
+</body></html>
